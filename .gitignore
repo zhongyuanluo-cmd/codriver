@@ -1,0 +1,38 @@
+# CoDriver .gitignore
+
+# Flutter
+app/.dart_tool/
+app/.packages
+app/build/
+app/.flutter-plugins
+app/.flutter-plugins-dependencies
+
+# Python
+backend/__pycache__/
+backend/**/__pycache__/
+backend/*.pyc
+backend/**/*.pyc
+backend/.venv/
+backend/venv/
+backend/.pytest_cache/
+
+# C++ build
+shared_engine/build/
+*.o
+*.a
+*.so
+*.dylib
+*.xcframework
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+*.secret

@@ -1,0 +1,54 @@
+name: ci
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # C++ Shared Engine
+  engine-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Eigen3
+        run: sudo apt-get install -y libeigen3-dev
+      - name: Configure CMake
+        run: cmake -B shared_engine/build -DCMAKE_BUILD_TYPE=Release shared_engine/
+      - name: Build
+        run: cmake --build shared_engine/build
+      - name: Test
+        run: ctest --test-dir shared_engine/build --output-on-failure
+
+  # Python Backend
+  backend-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: |
+          cd backend
+          pip install -r requirements.txt
+      - name: Lint
+        run: |
+          cd backend
+          ruff check .
+      - name: Type check
+        run: |
+          cd backend
+          mypy app/
+
+  # Flutter App (uncomment after flutter SDK setup)
+  # app-build:
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: subosito/flutter-action@v2
+  #       with:
+  #         flutter-version: '3.x'
+  #     - run: cd app && flutter analyze
+  #     - run: cd app && flutter test
