@@ -42,13 +42,13 @@ jobs:
           cd backend
           mypy app/
 
-  # Flutter App (uncomment after flutter SDK setup)
-  # app-build:
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #     - uses: subosito/flutter-action@v2
-  #       with:
-  #         flutter-version: '3.x'
-  #     - run: cd app && flutter analyze
-  #     - run: cd app && flutter test
+  # Flutter App
+  app-analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.x'
+      - run: cd app && flutter pub get
+      - run: cd app && flutter analyze

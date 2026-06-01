@@ -5,8 +5,19 @@ import 'package:flutter/services.dart';
 class SensorChannel {
   static const _channel = EventChannel('com.codriver/sensors');
 
-  /// Stream of FusedPoint objects from the C++ engine via EventChannel
+  /// Stream of FusedPoint maps from the C++ engine via EventChannel.
+  /// Each event is a Map with keys: lat, lon, speed_kmh, heading, long_g, lat_g, etc.
   Stream<Map<String, dynamic>> get fusedPointStream {
-    return _channel.receiveBroadcastStream().cast<Map<String, dynamic>>();
+    return _channel.receiveBroadcastStream().map((event) {
+      try {
+        return Map<String, dynamic>.from(event as Map);
+      } catch (e) {
+        throw PlatformException(
+          code: 'INVALID_EVENT',
+          message: 'Expected Map event from EventChannel, got ${event.runtimeType}',
+          details: e,
+        );
+      }
+    });
   }
 }

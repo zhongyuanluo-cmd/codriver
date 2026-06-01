@@ -11,6 +11,8 @@ if(MSVC)
 endif()
 
 # Eigen3 - header-only, download source without running its CMake
+# Note: conanfile.txt also declares eigen/3.4.0 for local dev (Conan).
+# CI uses FetchContent (below); local dev can use `conan install .`
 include(FetchContent)
 FetchContent_Declare(
     Eigen3

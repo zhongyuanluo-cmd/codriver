@@ -20,6 +20,8 @@ struct FusedPoint {
     double vert_g;        // 垂直 G
     double track_distance_m;
     double confidence;    // 定位置信度 (0-1)
+    // Note: FusedPoint does not include GPS raw metadata (satellites, fix_quality).
+    // These are consumed internally by Kalman Filter and not exposed to downstream.
 };
 
 // --- 赛道分段 ---
@@ -35,7 +37,13 @@ struct TrackSegment {
     double radius_m;
     double angle_deg;
 
-    // 参考数据 (新赛道可为 NaN)
+    // 关键点坐标 (WGS84)
+    double entry_lat, entry_lon;
+    double apex_lat, apex_lon;
+    double exit_lat, exit_lon;
+
+    // 参考数据 — 用 quiet_NaN() 表示"无参考"(新赛道/自动检测赛道)
+    // 初始化: TrackSegment seg{}; seg.reference_speed_kmh = std::numeric_limits<double>::quiet_NaN();
     double reference_speed_kmh;
     double reference_brake_point_m;
     double reference_entry_speed_kmh;
