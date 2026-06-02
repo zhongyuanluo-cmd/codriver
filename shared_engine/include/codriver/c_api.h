@@ -121,6 +121,15 @@ int c_pipeline_get_result_count(void* handle);
 int c_pipeline_get_result(void* handle, int index, CPipelineResult* out);
 void c_pipeline_reset(void* handle);
 
+// --- Best Lap Finder (Phase 2.5) ---
+typedef struct { int best_lap, total_laps; int64_t best_time, total_time, optimal_time; int has_opt; } CBestLapResult;
+void* c_best_lap_create();
+void c_best_lap_destroy(void* handle);
+int c_best_lap_record(void* handle, int64_t lap_time_ms, double lap_dist_m);
+int c_best_lap_get_best(void* handle, CBestLapResult* out);
+int c_best_lap_count(void* handle);
+void c_best_lap_reset(void* handle);
+
 #ifdef __cplusplus
 }
 #endif

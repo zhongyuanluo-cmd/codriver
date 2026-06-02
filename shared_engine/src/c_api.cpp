@@ -8,6 +8,7 @@
 #include "codriver/brake_detector.h"
 #include "codriver/corner_speed_compare.h"
 #include "codriver/analysis_pipeline.h"
+#include "codriver/best_lap_finder.h"
 #include "codriver/types.h"
 #include <cstring>
 
@@ -227,6 +228,31 @@ int c_pipeline_get_result(void* h, int idx, CPipelineResult* out) {
 }
 void c_pipeline_reset(void* h) {
     if(!h)return; auto o=reinterpret_cast<codriver::AnalysisPipeline*>(h); o->reset();
+}
+
+// ============================================================
+// Best Lap Finder (Phase 2.5)
+// ============================================================
+void* c_best_lap_create() { return new codriver::BestLapFinder(); }
+void c_best_lap_destroy(void* h) { if(!h)return; auto o=reinterpret_cast<codriver::BestLapFinder*>(h); delete o; }
+int c_best_lap_record(void* h, int64_t t, double d) {
+    if(!h)return 0; auto o=reinterpret_cast<codriver::BestLapFinder*>(h);
+    return o->recordLap(t,d)?1:0;
+}
+int c_best_lap_get_best(void* h, CBestLapResult* out) {
+    if(!h||!out)return -1; auto o=reinterpret_cast<codriver::BestLapFinder*>(h);
+    auto r=o->getBest();
+    out->best_lap=r.best_lap_number; out->total_laps=r.total_laps;
+    out->best_time=r.best_lap_time_ms; out->total_time=r.total_time_ms;
+    out->optimal_time=r.optimal_lap_time_ms; out->has_opt=r.has_optimal?1:0;
+    return 0;
+}
+int c_best_lap_count(void* h) {
+    if(!h)return 0; auto o=reinterpret_cast<codriver::BestLapFinder*>(h);
+    return o->getLapCount();
+}
+void c_best_lap_reset(void* h) {
+    if(!h)return; auto o=reinterpret_cast<codriver::BestLapFinder*>(h); o->reset();
 }
 
 } // extern "C"

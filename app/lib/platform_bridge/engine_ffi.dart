@@ -102,8 +102,17 @@ final class CPipelineResult extends Struct {
   @Int32()  external int tier;
 }
 
+final class CBestLapResult extends Struct {
+  @Int32()  external int bestLap;
+  @Int32()  external int totalLaps;
+  @Int64()  external int bestTime;
+  @Int64()  external int totalTime;
+  @Int64()  external int optimalTime;
+  @Int32()  external int hasOpt;
+}
+
 // ============================================================
-// EngineFFI — complete C API bindings (41/41)
+// EngineFFI — complete C API bindings (45/45)
 // ============================================================
 
 class EngineFFI {
@@ -281,4 +290,22 @@ class EngineFFI {
           int Function(Pointer<Void>, int, Pointer<CPipelineResult>)>('c_pipeline_get_result')(h, idx, out);
   static void pipelineReset(Pointer<Void> h) =>
       lib.lookupFunction<Void Function(Pointer<Void>), void Function(Pointer<Void>)>('c_pipeline_reset')(h);
+
+  // ============================================================
+  // Best Lap Finder — Phase 2.5 (4/4)
+  // ============================================================
+  static Pointer<Void> bestLapCreate() =>
+      lib.lookupFunction<Pointer<Void> Function(), Pointer<Void> Function()>('c_best_lap_create')();
+  static void bestLapDestroy(Pointer<Void> h) =>
+      lib.lookupFunction<Void Function(Pointer<Void>), void Function(Pointer<Void>)>('c_best_lap_destroy')(h);
+  static int bestLapRecord(Pointer<Void> h, int lapTimeMs, double lapDistM) =>
+      lib.lookupFunction<Int32 Function(Pointer<Void>, Int64, Double),
+          int Function(Pointer<Void>, int, double)>('c_best_lap_record')(h, lapTimeMs, lapDistM);
+  static int bestLapGetBest(Pointer<Void> h, Pointer<CBestLapResult> out) =>
+      lib.lookupFunction<Int32 Function(Pointer<Void>, Pointer<CBestLapResult>),
+          int Function(Pointer<Void>, Pointer<CBestLapResult>)>('c_best_lap_get_best')(h, out);
+  static int bestLapCount(Pointer<Void> h) =>
+      lib.lookupFunction<Int32 Function(Pointer<Void>), int Function(Pointer<Void>)>('c_best_lap_count')(h);
+  static void bestLapReset(Pointer<Void> h) =>
+      lib.lookupFunction<Void Function(Pointer<Void>), void Function(Pointer<Void>)>('c_best_lap_reset')(h);
 }

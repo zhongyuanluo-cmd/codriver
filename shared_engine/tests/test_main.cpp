@@ -4,6 +4,7 @@
 #include "codriver/brake_detector.h"
 #include "codriver/corner_speed_compare.h"
 #include "codriver/analysis_pipeline.h"
+#include "codriver/best_lap_finder.h"
 #include <cassert>
 #include <cmath>
 #include <cstdio>
@@ -278,6 +279,49 @@ int main() {
                    r->segment_id, r->root_cause, r->root_cause_label,
                    r->confidence, r->coach_message);
         }
+    }
+
+    // Test 13: BestLapFinder — fastest lap detection
+    {
+        codriver::BestLapFinder blf;
+        // Record 4 laps: 120s, 115s, 118s, 122s
+        blf.recordLap(120000, 4500.0);
+        blf.recordLap(115000, 4500.0);
+        blf.recordLap(118000, 4500.0);
+        blf.recordLap(122000, 4500.0);
+
+        assert(blf.getLapCount() == 4);
+
+        auto best = blf.getBest();
+        assert(best.total_laps == 4);
+        assert(best.best_lap_number == 2);     // lap 2 is fastest (115s)
+        assert(best.best_lap_time_ms == 115000);
+        assert(!best.has_optimal);             // no sectors recorded
+
+        printf("PASS: BestLapFinder: %d laps, best=L%d (%lld ms), total=%lld ms\n",
+               best.total_laps, best.best_lap_number, best.best_lap_time_ms, best.total_time_ms);
+    }
+
+    // Test 14: BestLapFinder — optimal lap from sectors
+    {
+        codriver::BestLapFinder blf;
+        blf.recordLap(120000, 4500.0);
+        blf.recordSector(0, 30000);
+        blf.recordSector(1, 40000);
+        blf.recordSector(2, 50000);
+
+        blf.recordLap(118000, 4500.0);
+        blf.recordSector(0, 28000);  // better sector 0
+        blf.recordSector(1, 42000);
+        blf.recordSector(2, 48000);  // better sector 2
+
+        auto best = blf.getBest();
+        assert(best.has_optimal);
+        // optimal = 28000 + 40000 + 48000 = 116000
+        assert(best.optimal_lap_time_ms == 116000);
+
+        printf("PASS: BestLapFinder optimal: best=L%d(%lldms) optimal=%lldms\n",
+               best.best_lap_number, best.best_lap_time_ms, best.optimal_lap_time_ms);
     }
 
     printf("\nAll tests passed.\n");
