@@ -37,6 +37,9 @@ public:
     // Release phase tracking for trail braking
     double release_start_g = 0.0;   // long_g at start of release (≈ peak)
     double release_start_dist = 0.0;
+    int64_t trail_80_ts = 0;        // timestamp when lg crosses 80% of peak
+    int64_t trail_20_ts = 0;        // timestamp when lg crosses 20% of peak
+    bool trail_80_crossed = false;
 
     // Completed events
     std::vector<BrakeEvent> events;
@@ -102,7 +105,36 @@ bool BrakeDetector::processPoint(const FusedPoint& point) {
         break;
 
     case BrakeState::RELEASING:
-        // Track how far we've released
+        // P1-2: If braking resumes during release, roll back to BRAKING
+        if (lg < kBrakeOnThreshold) {
+            impl_->state = BrakeState::BRAKING;
+            impl_->trail_80_crossed = false;
+            // Update peak if deeper braking
+            if (lg < impl_->peak_decel) {
+                impl_->peak_decel = lg;
+                impl_->peak_distance = point.track_distance_m;
+            }
+            break;
+        }
+
+        // P0-1: Track trail brake thresholds (80% and 20% of peak decel)
+        // During release, lg goes from peak (most negative) toward 0.
+        // trail_80: lg crosses 80% of peak → e.g., peak=-0.85, 80%=-0.68
+        // trail_20: lg crosses 20% of peak → e.g., peak=-0.85, 20%=-0.17
+        if (!impl_->trail_80_crossed && impl_->peak_decel < 0) {
+            double trail80 = impl_->peak_decel * kTrail80Threshold;
+            if (lg >= trail80) {
+                impl_->trail_80_ts = point.timestamp_ms;
+                impl_->trail_80_crossed = true;
+            }
+        }
+        if (impl_->trail_80_crossed && impl_->peak_decel < 0) {
+            double trail20 = impl_->peak_decel * kTrail20Threshold;
+            if (lg >= trail20 && impl_->trail_20_ts == 0) {
+                impl_->trail_20_ts = point.timestamp_ms;
+            }
+        }
+
         if (lg >= -0.05) {
             // Transition: RELEASING → CRUISING (braking fully released)
             impl_->state = BrakeState::CRUISING;
@@ -126,16 +158,29 @@ bool BrakeDetector::processPoint(const FusedPoint& point) {
                 impl_->current.speed_drop_kmh =
                     impl_->current.brake_speed_kmh - impl_->current.release_speed_kmh;
 
-                // Trail brake duration: time from 80% to 20% of peak decel release.
-                // Simplified: total release duration * 0.6 as approximation.
-                // Full implementation needs per-point tracking during release phase.
-                double release_phase_ms = impl_->current.braking_duration_ms * 0.4; // ~40% of braking is release
-                impl_->current.trail_brake_duration_ms = release_phase_ms * 0.6;
-                impl_->current.brake_release_duration_ms = release_phase_ms * 0.4;
+                // P0-1: Trail brake duration from per-point tracking
+                if (impl_->trail_80_crossed && impl_->trail_80_ts > 0) {
+                    impl_->current.trail_brake_duration_ms =
+                        static_cast<double>(impl_->trail_20_ts > 0
+                            ? impl_->trail_20_ts - impl_->trail_80_ts
+                            : impl_->current.release_timestamp_ms - impl_->trail_80_ts);
+                } else {
+                    impl_->current.trail_brake_duration_ms = 0;
+                }
+                // Brake release: 20% → 0 phase
+                if (impl_->trail_20_ts > 0) {
+                    impl_->current.brake_release_duration_ms =
+                        static_cast<double>(impl_->current.release_timestamp_ms - impl_->trail_20_ts);
+                } else {
+                    impl_->current.brake_release_duration_ms = 0;
+                }
 
                 // Store
                 impl_->events.push_back(impl_->current);
                 impl_->has_brake_event = false;
+                impl_->trail_80_crossed = false;
+                impl_->trail_80_ts = 0;
+                impl_->trail_20_ts = 0;
                 event_finalized = true;
             } else {
                 impl_->has_brake_event = false;

@@ -31,7 +31,8 @@ struct BrakeEvent {
     double speed_drop_kmh;            // brake_speed - release_speed
 
     // Associated corner (filled by caller / corner_detector integration)
-    const char* segment_id;
+    // P1-1: Initialized to nullptr to avoid dangling pointer on default construction
+    const char* segment_id = nullptr;
 };
 
 // --- 制动检测器 ---
