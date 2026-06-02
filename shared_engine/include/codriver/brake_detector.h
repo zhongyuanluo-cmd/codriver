@@ -31,7 +31,7 @@ struct BrakeEvent {
     double speed_drop_kmh;            // brake_speed - release_speed
 
     // Associated corner (filled by caller / corner_detector integration)
-    const char* segment_id;
+    char segment_id[32] = {0};
 };
 
 // --- 制动检测器 ---

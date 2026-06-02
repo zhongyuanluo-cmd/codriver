@@ -152,6 +152,7 @@ int c_brake_detector_get_event(void* h, int idx, CBrakeEvent* out) {
     out->release_ts=e->release_timestamp_ms;
     out->dur_ms=e->braking_duration_ms; out->trail_ms=e->trail_brake_duration_ms;
     out->release_ms=e->brake_release_duration_ms; out->speed_drop=e->speed_drop_kmh;
+    std::snprintf(out->seg_id, sizeof(out->seg_id), "%s", e->segment_id[0] ? e->segment_id : "");
     return 0;
 }
 void c_brake_detector_reset(void* h) {
