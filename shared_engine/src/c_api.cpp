@@ -104,19 +104,22 @@ double c_lap_timer_total_dist(void* h) { if(!h)return 0; auto o=reinterpret_cast
 // ============================================================
 void* c_coord_transform_create() { return new codriver::CoordTransform(); }
 void c_coord_transform_destroy(void* h) { if(!h)return; auto o=reinterpret_cast<codriver::CoordTransform*>(h); delete o; }
-void c_coord_transform_calibrate(void* h, double ax, double ay, double az, double gx, double gy, double gz) {
-    if(!h)return; auto o=reinterpret_cast<codriver::CoordTransform*>(h);
-    o->calibrate(ax, ay, az, gx, gy, gz);
+int c_coord_transform_calibrate(void* h, double ax, double ay, double az) {
+    if(!h)return 0; auto o=reinterpret_cast<codriver::CoordTransform*>(h);
+    return o->calibrate(ax, ay, az) ? 1 : 0;
 }
 int c_coord_transform_transform(void* h, double ax, double ay, double az,
                                  double* clg, double* clat, double* cv) {
     if(!h||!clg||!clat||!cv)return -1;
     auto o=reinterpret_cast<codriver::CoordTransform*>(h);
-    o->transform(ax, ay, az, clg, clat, cv); return 0;
+    return o->transform(ax, ay, az, clg, clat, cv);
 }
 int c_coord_transform_is_calibrated(void* h) {
     if(!h)return 0; auto o=reinterpret_cast<codriver::CoordTransform*>(h);
     return o->isCalibrated()?1:0;
+}
+int c_coord_transform_detect_drift(void* /*h*/, double gps_hdg, double imu_hdg) {
+    return codriver::CoordTransform::detectDrift(gps_hdg, imu_hdg) ? 1 : 0;
 }
 
 } // extern "C"

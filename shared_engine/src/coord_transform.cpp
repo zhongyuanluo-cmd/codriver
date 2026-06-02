@@ -19,9 +19,8 @@ CoordTransform::CoordTransform() : impl_(new Impl()) {
 
 CoordTransform::~CoordTransform() { delete impl_; }
 
-void CoordTransform::calibrate(double phone_accel_x, double phone_accel_y,
-                                double phone_accel_z, double /* phone_gyro_x */,
-                                double /* phone_gyro_y */, double /* phone_gyro_z */) {
+bool CoordTransform::calibrate(double phone_accel_x, double phone_accel_y,
+                                double phone_accel_z) {
     // Phase 2: Gravity-based orientation calibration.
     //
     // When the phone is stationary on a dashboard mount, the only acceleration
@@ -41,8 +40,8 @@ void CoordTransform::calibrate(double phone_accel_x, double phone_accel_y,
     double mag = g_phone.norm();
 
     if (mag < 0.5 || mag > 15.0) {
-        // Gravity reading out of plausible range; keep existing calibration
-        return;
+        // Gravity reading out of plausible range; calibration failed
+        return false;
     }
 
     impl_->gravity_mag = mag;
@@ -58,7 +57,8 @@ void CoordTransform::calibrate(double phone_accel_x, double phone_accel_y,
         // Already aligned — identity quaternion
         impl_->q_phone_to_car.setIdentity();
     } else if (dot < -0.9999) {
-        // 180° apart — rotate about any perpendicular axis
+        // 180° apart — rotate about any perpendicular axis.
+        // Pick (1,0,0) as arbitrary axis; cross with g_phone gives a valid perpendicular.
         Eigen::Vector3d axis = std::abs(g_phone.x()) < 0.9
             ? Eigen::Vector3d(1.0, 0.0, 0.0).cross(g_phone).normalized()
             : Eigen::Vector3d(0.0, 1.0, 0.0).cross(g_phone).normalized();
@@ -72,21 +72,19 @@ void CoordTransform::calibrate(double phone_accel_x, double phone_accel_y,
     }
 
     impl_->calibrated = true;
+    return true;
 }
 
-void CoordTransform::transform(double accel_x, double accel_y, double accel_z,
-                                double* car_long_g, double* car_lat_g,
-                                double* car_vert_g) {
+int CoordTransform::transform(double accel_x, double accel_y, double accel_z,
+                               double* car_long_g, double* car_lat_g,
+                               double* car_vert_g) {
     if (!impl_->calibrated) {
-        // No calibration — assume phone is mounted flat (screen up, top forward)
-        // In this default orientation, phone frame ≈ car frame:
-        //   phone +X ≈ car forward, phone +Y ≈ car right, phone +Z ≈ car up
-        // But accelerometer measures in device coords where +Z points out of screen.
-        // For a flat-mounted phone: accel_x ≈ long, accel_y ≈ lat, accel_z ≈ vert (but signed oppositely for gravity)
-        *car_long_g = accel_x / impl_->gravity_mag;
-        *car_lat_g = accel_y / impl_->gravity_mag;
-        *car_vert_g = accel_z / impl_->gravity_mag;
-        return;
+        // P0-1: Uncalibrated — return zeros to prevent downstream misuse.
+        // Phone-frame accel is NOT car-frame accel.
+        *car_long_g = 0.0;
+        *car_lat_g  = 0.0;
+        *car_vert_g = 0.0;
+        return -1;
     }
 
     // Apply rotation: car_accel = q * phone_accel * q_conjugate
@@ -97,11 +95,12 @@ void CoordTransform::transform(double accel_x, double accel_y, double accel_z,
     *car_long_g = car_accel.x() / impl_->gravity_mag;
     *car_lat_g  = car_accel.y() / impl_->gravity_mag;
     *car_vert_g = car_accel.z() / impl_->gravity_mag;
+    return 0;
 }
 
 bool CoordTransform::isCalibrated() const { return impl_->calibrated; }
 
-bool CoordTransform::detectDrift(double gps_heading_deg, double imu_heading_deg) const {
+bool CoordTransform::detectDrift(double gps_heading_deg, double imu_heading_deg) {
     constexpr double kDriftThreshold = 15.0;
     double diff = std::abs(gps_heading_deg - imu_heading_deg);
     if (diff > 180.0) diff = 360.0 - diff;
