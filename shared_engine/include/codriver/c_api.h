@@ -83,7 +83,8 @@ int c_coord_transform_detect_drift(void* handle, double gps_heading, double imu_
 // C-side BrakeEvent struct (char arrays, no dangling pointers)
 typedef struct { double brake_lat, brake_lon, brake_dist, brake_spd, peak_g, peak_dist;
     double rel_lat, rel_lon, rel_dist, rel_spd;
-    double dur_ms, trail_ms, release_ms, speed_drop; int64_t brake_ts, release_ts; } CBrakeEvent;
+    double dur_ms, trail_ms, release_ms, speed_drop; int64_t brake_ts, release_ts;
+    char seg_id[32]; } CBrakeEvent;
 void* c_brake_detector_create();
 void c_brake_detector_destroy(void* handle);
 // Returns 1 if a braking event was finalized, 0 otherwise

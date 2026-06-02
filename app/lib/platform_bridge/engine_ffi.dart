@@ -61,6 +61,7 @@ final class CBrakeEvent extends Struct {
   @Double() external double speedDrop;
   @Int64()  external int brakeTs;
   @Int64()  external int releaseTs;
+  @Array(32) external Array<Uint8> segId;
 }
 
 // ============================================================

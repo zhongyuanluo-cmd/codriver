@@ -404,3 +404,39 @@ codriver/
 
 **Monitor 闭环**: ✅ 已闭环 — monitor-review.md#R-008
 
+---
+
+## R-009: Phase 2.2 BrakeDetector 审查
+
+- **审查来源**: monitor-review.md#R-009
+- **审查日期**: 2026-06-02
+- **修复日期**: 2026-06-02
+- **修复分支**: fix/R-009 @ commit 530e43c
+
+### P0 修复记录（必须修复）
+
+| 问题编号 | 修复状态 | 修复方式 | 修改文件 |
+|:---:|:---:|------|------|
+| P0-1 | ✅ | Impl 新增 trail_80_ts/trail_20_ts/trail_80_crossed 字段，RELEASING 阶段逐点检测 lg 穿越 80%/20% peak，真实计算 trail_brake_duration_ms 和 brake_release_duration_ms | brake_detector.cpp, brake_detector.h（Impl 字段） |
+
+### P1 修复记录（必须修复）
+
+| 问题编号 | 修复状态 | 修复方式 | 修改文件 |
+|:---:|:---:|------|------|
+| P1-1 | ✅ | `segment_id` 类内初始化为 `nullptr`，消除默认构造后未定义值风险 | brake_detector.h |
+| P1-2 | ✅ | RELEASING 分支顶部新增 `lg < kBrakeOnThreshold` 检查，回退到 BRAKING + 重置 trail_80_crossed + 更新 peak | brake_detector.cpp |
+
+### 修复摘要
+
+- **改动文件**: brake_detector.h, brake_detector.cpp（共 2 文件）
+- **C API / FFI**: 无需改动（struct 布局不变，segment_id 仍是 `const char*`）
+- **构建验证**: MSVC Release 0 errors, test_engine 9/9 pass
+- **Monitor 闭环**: ⬜ P0/P1 ✅ 已闭环，P2 遗留项需修复后方可合并
+
+### P2 修复记录（合并阻塞）
+
+| 问题编号 | 修复状态 | 修复方式 | 修改文件 |
+|:---:|:---:|------|------|
+| L-11 | ⬜ | `segment_id` 从 `const char*` 改为 `char segment_id[32] = {0}`，同步更新 CBrakeEvent（c_api.h）、C API 拷贝（c_api.cpp）、FFI 绑定（engine_ffi.dart：`Array<Uint8>` 32 字节 + Dart Utf8 解码） | brake_detector.h, c_api.h, c_api.cpp, engine_ffi.dart |
+| L-12 | ⬜ | 新增 2 个单元测试：(1) RELEASING→BRAKING 回退测试；(2) trail_brake_duration_ms 完整释放流程计算测试 | test_main.cpp |
+

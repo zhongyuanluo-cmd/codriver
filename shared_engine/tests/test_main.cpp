@@ -139,6 +139,42 @@ int main() {
         printf("PASS: BrakeDetector reset: %d events\n", bd.getEventCount());
     }
 
+    // Test 8: BrakeDetector — RELEASING→BRAKING rollback (L-12)
+    {
+        codriver::BrakeDetector bd;
+        codriver::FusedPoint fp{};
+        fp.timestamp_ms = 1000; fp.track_distance_m = 50.0;
+        fp.speed_kmh = 100.0; fp.long_g = 0.05;
+        bd.processPoint(fp);
+
+        fp.timestamp_ms = 2000; fp.track_distance_m = 80.0;
+        fp.speed_kmh = 90.0; fp.long_g = -0.5;
+        bd.processPoint(fp);  // CRUISING → BRAKING
+
+        fp.timestamp_ms = 3000; fp.track_distance_m = 110.0;
+        fp.speed_kmh = 85.0; fp.long_g = -0.05;
+        bd.processPoint(fp);  // BRAKING → RELEASING
+
+        // Now brake again during release (trail braking re-apply)
+        fp.timestamp_ms = 4000; fp.track_distance_m = 140.0;
+        fp.speed_kmh = 75.0; fp.long_g = -0.6;
+        bd.processPoint(fp);  // RELEASING → BRAKING (rollback!)
+
+        fp.timestamp_ms = 5000; fp.track_distance_m = 160.0;
+        fp.speed_kmh = 65.0; fp.long_g = -0.03;
+        bd.processPoint(fp);  // BRAKING → RELEASING
+
+        fp.timestamp_ms = 6000; fp.track_distance_m = 180.0;
+        fp.speed_kmh = 60.0; fp.long_g = 0.01;
+        bd.processPoint(fp);  // RELEASING → CRUISING, finalized
+
+        assert(bd.getEventCount() == 1);
+        auto e = bd.getEvent(0);
+        assert(e->peak_decel_g < -0.55);  // peak should be -0.6 (second braking)
+        printf("PASS: BrakeDetector rollback: peak=%.2fg, speed drop=%.0fkm/h\n",
+               e->peak_decel_g, e->speed_drop_kmh);
+    }
+
     printf("\nAll tests passed.\n");
     return 0;
 }
