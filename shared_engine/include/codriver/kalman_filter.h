@@ -20,7 +20,7 @@ public:
     FusedPoint getState() const;
 
 private:
-    class Impl;
+    struct Impl;  // Pimpl — public members for simplicity
     Impl* impl_;
 };
 
