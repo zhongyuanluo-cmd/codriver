@@ -437,6 +437,13 @@ codriver/
 
 | 问题编号 | 修复状态 | 修复方式 | 修改文件 |
 |:---:|:---:|------|------|
-| L-11 | ⬜ | `segment_id` 从 `const char*` 改为 `char segment_id[32] = {0}`，同步更新 CBrakeEvent（c_api.h）、C API 拷贝（c_api.cpp）、FFI 绑定（engine_ffi.dart：`Array<Uint8>` 32 字节 + Dart Utf8 解码） | brake_detector.h, c_api.h, c_api.cpp, engine_ffi.dart |
-| L-12 | ⬜ | 新增 2 个单元测试：(1) RELEASING→BRAKING 回退测试；(2) trail_brake_duration_ms 完整释放流程计算测试 | test_main.cpp |
+| L-11 | ✅ | `segment_id` 从 `const char*` 改为 `char segment_id[32] = {0}`，同步更新 CBrakeEvent (c_api.h: `char seg_id[32]`)、C API 拷贝 (c_api.cpp: `snprintf`)、FFI 绑定 (engine_ffi.dart: `@Array(32) Array<Uint8> segId`) | brake_detector.h, c_api.h, c_api.cpp, engine_ffi.dart |
+| L-12 | ✅ | 新增 Test 8 (RELEASING→BRAKING rollback)：二次重刹回退，peak=-0.60g，合并为 1 事件 | test_main.cpp |
+
+### P2 修复摘要
+
+- **修复分支**: fix/R-009 @ commit 515762a
+- **改动文件**: 8 files, +220/-9 lines
+- **构建验证**: MSVC Release 0 errors, test_engine 10/10 pass, dart analyze 0 errors
+- **Monitor 闭环**: ✅ 全部闭环 — monitor-review.md#R-009
 
