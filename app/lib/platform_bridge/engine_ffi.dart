@@ -6,7 +6,7 @@ import 'package:ffi/ffi.dart';
 // C-side Structs (match c_api.h definitions)
 // ============================================================
 
-class CFusedPoint extends Struct {
+final class CFusedPoint extends Struct {
   @Double() external double lat;
   @Double() external double lon;
   @Double() external double alt;
@@ -18,7 +18,7 @@ class CFusedPoint extends Struct {
   @Double() external double confidence;
 }
 
-class CCornerInfo extends Struct {
+final class CCornerInfo extends Struct {
   @Array(8)  external Array<Uint8> segId;
   @Array(16) external Array<Uint8> type;
   @Array(8)  external Array<Uint8> dir;
@@ -36,7 +36,7 @@ class CCornerInfo extends Struct {
   @Int32()  external int diff;
 }
 
-class CRootCause extends Struct {
+final class CRootCause extends Struct {
   @Array(32)  external Array<Uint8> cause;
   @Array(32)  external Array<Uint8> label;
   @Array(16)  external Array<Uint8> conf;
