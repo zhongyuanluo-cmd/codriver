@@ -64,8 +64,24 @@ final class CBrakeEvent extends Struct {
   @Array(32) external Array<Uint8> segId;
 }
 
+final class CCornerSpeedDelta extends Struct {
+  @Double() external double entryKmh;
+  @Double() external double refEntry;
+  @Double() external double entryDelta;
+  @Double() external double minKmh;
+  @Double() external double refMin;
+  @Double() external double minDelta;
+  @Double() external double exitKmh;
+  @Double() external double refExit;
+  @Double() external double exitDelta;
+  @Double() external double latG;
+  @Double() external double refLatG;
+  @Double() external double latDelta;
+  @Array(32) external Array<Uint8> segId;
+}
+
 // ============================================================
-// EngineFFI — complete C API bindings (34/34: Phase 1 23 + Phase 2 coord_transform 6 + brake_detector 5)
+// EngineFFI — complete C API bindings (37/37: Phase 1 23 + Phase 2 coord 6 + brake 5 + corner_speed 3)
 // ============================================================
 
 class EngineFFI {
@@ -207,4 +223,21 @@ class EngineFFI {
           int Function(Pointer<Void>, int, Pointer<CBrakeEvent>)>('c_brake_detector_get_event')(h, idx, out);
   static void brakeDetectorReset(Pointer<Void> h) =>
       lib.lookupFunction<Void Function(Pointer<Void>), void Function(Pointer<Void>)>('c_brake_detector_reset')(h);
+
+  // ============================================================
+  // Corner Speed Compare — Phase 2.3 (3/3)
+  // ============================================================
+  static Pointer<Void> cornerSpeedCreate() =>
+      lib.lookupFunction<Pointer<Void> Function(), Pointer<Void> Function()>('c_corner_speed_create')();
+  static void cornerSpeedDestroy(Pointer<Void> h) =>
+      lib.lookupFunction<Void Function(Pointer<Void>), void Function(Pointer<Void>)>('c_corner_speed_destroy')(h);
+  static int cornerSpeedCompare(Pointer<Void> h,
+      Pointer<Utf8> segId, double refEntry, double refMin, double refExit, double refLat,
+      double actEntry, double actMin, double actExit, double actLat,
+      Pointer<CCornerSpeedDelta> out) =>
+      lib.lookupFunction<Int32 Function(Pointer<Void>, Pointer<Utf8>, Double, Double, Double, Double,
+          Double, Double, Double, Double, Pointer<CCornerSpeedDelta>),
+          int Function(Pointer<Void>, Pointer<Utf8>, double, double, double, double,
+              double, double, double, double, Pointer<CCornerSpeedDelta>)>('c_corner_speed_compare')(
+          h, segId, refEntry, refMin, refExit, refLat, actEntry, actMin, actExit, actLat, out);
 }

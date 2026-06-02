@@ -34,6 +34,7 @@ add_library(codriver_engine STATIC
     src/coord_transform.cpp
     src/lap_timer.cpp
     src/brake_detector.cpp
+    src/corner_speed_compare.cpp
     src/c_api.cpp
 )
 

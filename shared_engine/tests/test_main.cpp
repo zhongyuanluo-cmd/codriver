@@ -2,9 +2,11 @@
 #include "codriver/root_cause.h"
 #include "codriver/coord_transform.h"
 #include "codriver/brake_detector.h"
+#include "codriver/corner_speed_compare.h"
 #include <cassert>
 #include <cmath>
 #include <cstdio>
+#include <limits>
 
 int main() {
     printf("CoDriver Engine Tests\n");
@@ -173,6 +175,47 @@ int main() {
         assert(e->peak_decel_g < -0.55);  // peak should be -0.6 (second braking)
         printf("PASS: BrakeDetector rollback: peak=%.2fg, speed drop=%.0fkm/h\n",
                e->peak_decel_g, e->speed_drop_kmh);
+    }
+
+    // Test 9: CornerSpeedCompare — entry/apex/exit/lat_g comparison
+    {
+        codriver::CornerSpeedCompare cmp;
+        codriver::TrackSegment seg{};
+        seg.segment_id = "T1";
+        seg.reference_entry_speed_kmh = 100.0;
+        seg.reference_speed_kmh = 80.0;
+        seg.reference_exit_speed_kmh = 95.0;
+        seg.reference_lateral_g = 1.2;
+
+        // Driver entered 5 km/h faster, min 2 km/h slower, exit same, lat_g 0.1g less
+        auto d = cmp.compare(seg, 105.0, 78.0, 95.0, 1.1);
+        assert(d.entry_delta_kmh == 5.0);
+        assert(d.min_delta_kmh == -2.0);
+        assert(d.exit_delta_kmh == 0.0);
+        assert(std::abs(d.lat_g_delta + 0.1) < 0.01);
+        printf("PASS: CornerSpeedCompare T1: entry=+%.0f min=%.0f exit=%.0f lat=%.2f\n",
+               d.entry_delta_kmh, d.min_delta_kmh, d.exit_delta_kmh, d.lat_g_delta);
+    }
+
+    // Test 10: CornerSpeedCompare — no reference (NaN)
+    {
+        codriver::CornerSpeedCompare cmp;
+        codriver::TrackSegment seg{};
+        seg.segment_id = "T2";
+        // All reference fields default to 0.0, not NaN
+        // Set them explicitly to NaN for new track scenario
+        seg.reference_entry_speed_kmh = std::numeric_limits<double>::quiet_NaN();
+        seg.reference_speed_kmh = std::numeric_limits<double>::quiet_NaN();
+        seg.reference_exit_speed_kmh = std::numeric_limits<double>::quiet_NaN();
+        seg.reference_lateral_g = std::numeric_limits<double>::quiet_NaN();
+
+        auto d = cmp.compare(seg, 90.0, 70.0, 85.0, 1.0);
+        // Without reference, all deltas should be 0
+        assert(d.entry_delta_kmh == 0.0);
+        assert(d.min_delta_kmh == 0.0);
+        assert(d.exit_delta_kmh == 0.0);
+        assert(d.lat_g_delta == 0.0);
+        printf("PASS: CornerSpeedCompare T2 (no ref): all deltas zeroed\n");
     }
 
     printf("\nAll tests passed.\n");

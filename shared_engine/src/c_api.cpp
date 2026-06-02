@@ -6,6 +6,7 @@
 #include "codriver/lap_timer.h"
 #include "codriver/coord_transform.h"
 #include "codriver/brake_detector.h"
+#include "codriver/corner_speed_compare.h"
 #include "codriver/types.h"
 #include <cstring>
 
@@ -157,6 +158,35 @@ int c_brake_detector_get_event(void* h, int idx, CBrakeEvent* out) {
 }
 void c_brake_detector_reset(void* h) {
     if(!h)return; auto o=reinterpret_cast<codriver::BrakeDetector*>(h); o->reset();
+}
+
+// ============================================================
+// Corner Speed Compare (Phase 2.3)
+// ============================================================
+void* c_corner_speed_create() { return new codriver::CornerSpeedCompare(); }
+void c_corner_speed_destroy(void* h) { if(!h)return; auto o=reinterpret_cast<codriver::CornerSpeedCompare*>(h); delete o; }
+int c_corner_speed_compare(void* h,
+    const char* seg_id, double ref_entry, double ref_min, double ref_exit, double ref_lat,
+    double act_entry, double act_min, double act_exit, double act_lat,
+    CCornerSpeedDelta* out) {
+    if(!h||!out)return -1; auto o=reinterpret_cast<codriver::CornerSpeedCompare*>(h);
+    codriver::TrackSegment seg{};
+    seg.segment_id = seg_id;
+    seg.reference_entry_speed_kmh = ref_entry;
+    seg.reference_speed_kmh = ref_min;
+    seg.reference_exit_speed_kmh = ref_exit;
+    seg.reference_lateral_g = ref_lat;
+    auto d = o->compare(seg, act_entry, act_min, act_exit, act_lat);
+    out->entry_kmh = d.actual_entry_kmh; out->ref_entry = d.reference_entry_kmh;
+    out->entry_delta = d.entry_delta_kmh;
+    out->min_kmh = d.actual_min_kmh; out->ref_min = d.reference_min_kmh;
+    out->min_delta = d.min_delta_kmh;
+    out->exit_kmh = d.actual_exit_kmh; out->ref_exit = d.reference_exit_kmh;
+    out->exit_delta = d.exit_delta_kmh;
+    out->lat_g = d.actual_lat_g; out->ref_lat_g = d.reference_lat_g;
+    out->lat_delta = d.lat_g_delta;
+    std::snprintf(out->seg_id, sizeof(out->seg_id), "%s", d.segment_id ? d.segment_id : "");
+    return 0;
 }
 
 } // extern "C"

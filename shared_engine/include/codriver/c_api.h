@@ -94,6 +94,19 @@ int c_brake_detector_get_event_count(void* handle);
 int c_brake_detector_get_event(void* handle, int index, CBrakeEvent* out);
 void c_brake_detector_reset(void* handle);
 
+// --- Corner Speed Compare (Phase 2.3) ---
+typedef struct { double entry_kmh, ref_entry, entry_delta;
+    double min_kmh, ref_min, min_delta;
+    double exit_kmh, ref_exit, exit_delta;
+    double lat_g, ref_lat_g, lat_delta; char seg_id[32]; } CCornerSpeedDelta;
+void* c_corner_speed_create();
+void c_corner_speed_destroy(void* handle);
+// Compare one corner: fills CCornerSpeedDelta. Returns 0 on success.
+int c_corner_speed_compare(void* handle,
+    const char* seg_id, double ref_entry, double ref_min, double ref_exit, double ref_lat,
+    double act_entry, double act_min, double act_exit, double act_lat,
+    CCornerSpeedDelta* out);
+
 #ifdef __cplusplus
 }
 #endif
