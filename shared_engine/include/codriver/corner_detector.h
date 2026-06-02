@@ -11,9 +11,8 @@ public:
     CornerDetector();
     ~CornerDetector();
 
-    // Menger Curvature-based corner detection
-    void processPoint(double distance_m, double lat, double lon,
-                      double speed_kmh, double curvature);
+    // Menger Curvature-based corner detection (L-12: curvature computed internally)
+    void processPoint(double distance_m, double lat, double lon, double speed_kmh);
 
     std::vector<TrackSegment> getSegments() const;
     int getSegmentCount() const;
