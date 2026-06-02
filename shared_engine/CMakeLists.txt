@@ -32,6 +32,8 @@ add_library(codriver_engine STATIC
     src/root_cause.cpp
     src/coach_template.cpp
     src/coord_transform.cpp
+    src/lap_timer.cpp
+    src/c_api.cpp
 )
 
 target_include_directories(codriver_engine PUBLIC
