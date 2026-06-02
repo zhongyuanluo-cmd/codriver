@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <string>
 
 namespace codriver {
 
@@ -19,6 +20,7 @@ struct CornerDetector::Impl {
     CornerState state = CornerState::STRAIGHT;
     CornerData current;
     int seg_count = 0;
+    std::vector<std::string> id_store;  // New-P0-1: owns segment_id strings
 
     // Menger Curvature window: 3 points P_{k-1}, P_k, P_{k+1}
     struct { double d[3], lat[3], lon[3]; int idx=0; } win;
@@ -79,7 +81,8 @@ void CornerDetector::processPoint(double dist, double lat, double lon,
             // Create TrackSegment
             TrackSegment seg{};
             char buf[8]; std::snprintf(buf,sizeof(buf),"T%d",++impl_->seg_count);
-            seg.segment_id = buf;
+            impl_->id_store.push_back(buf);      // New-P0-1: persist in Impl
+            seg.segment_id = impl_->id_store.back().c_str();
             seg.segment_type = "corner";
 
             // Determine direction from cross product sign
@@ -123,6 +126,6 @@ void CornerDetector::processPoint(double dist, double lat, double lon,
 
 std::vector<TrackSegment> CornerDetector::getSegments() const { return impl_->segments; }
 int CornerDetector::getSegmentCount() const { return static_cast<int>(impl_->segments.size()); }
-void CornerDetector::reset() { impl_->segments.clear(); impl_->seg_count=0; impl_->state=CornerState::STRAIGHT; }
+void CornerDetector::reset() { impl_->segments.clear(); impl_->id_store.clear(); impl_->seg_count=0; impl_->state=CornerState::STRAIGHT; }
 
 } // namespace codriver
