@@ -29,34 +29,39 @@ int c_kalman_get_state(void* handle, CFusedPoint* out);
 // --- Corner Detector ---
 void* c_corner_detector_create();
 void c_corner_detector_destroy(void* handle);
-// Returns: 1 if a new corner was detected, 0 otherwise
+// Returns 1 if a new corner was detected, 0 otherwise (P1-5)
 int c_corner_detector_process_point(void* handle, double distance_m, double lat,
                                      double lon, double speed_kmh);
 int c_corner_detector_get_segment_count(void* handle);
-// Fills out_segment at index (0-based). Returns 0 on success, -1 if index out of range.
-// Caller owns out_segment memory; c_api fills it.
-int c_corner_detector_get_segment(void* handle, int index, void* out_segment);
+
+// P0-2: C-side struct with char arrays, no dangling pointers
+typedef struct { char seg_id[8], type[16], dir[8];
+    double entry_d, apex_d, exit_d, entry_la, entry_lo, apex_la, apex_lo, exit_la, exit_lo, radius, angle; int diff; } CCornerInfo;
+int c_corner_detector_get_segment(void* handle, int index, CCornerInfo* out);
 
 // --- Root Cause Engine ---
 void* c_root_cause_create();
 void c_root_cause_destroy(void* handle);
-// Analyzes corner metrics and fills result struct. Returns 0 on success.
-// Caller allocates RootCauseResult; callee fills string fields with static literals (no free needed).
+// P0-3: C-side struct with char arrays
+typedef struct { char cause[32], label[32], conf[16], sugg[128]; double loss; } CRootCause;
 int c_root_cause_analyze(void* handle,
-    double brake_point_delta_m, double entry_speed_delta,
-    double min_speed_delta, double exit_speed_delta,
-    double lat_g_ratio, double trail_brake_duration_ms,
-    double line_deviation_m,
-    void* out_result);  // cast to RootCauseResult*
+    double brake_delta, double entry_delta, double min_delta, double exit_delta,
+    double lat_g_ratio, double trail_ms, double line_dev, CRootCause* out);
 
 // --- Coach Template ---
 void* c_coach_template_create();
 void c_coach_template_destroy(void* handle);
-// Fills out_message buffer (caller provides max_len bytes). Returns bytes written (or 0 if truncated).
-int c_coach_template_generate(void* handle,
-    const char* segment_id, const char* root_cause,
-    double delta_value, int tier,
-    char* out_message, int max_len);
+int c_coach_template_generate(void* handle, const char* segment_id, const char* root_cause,
+                               double delta_value, int tier, char* out_message, int max_len);
+
+// --- Lap Timer (P1-4) ---
+void* c_lap_timer_create();
+void c_lap_timer_destroy(void* handle);
+void c_lap_timer_set_line(void* handle, double lat1, double lon1, double lat2, double lon2);
+// Returns lap_time_ms if start/finish crossed, 0 otherwise. dist_out=per-lap distance, direction=+1/-1/0
+int64_t c_lap_timer_process(void* handle, double lat, double lon, int64_t timestamp_ms, double* dist_out, int* direction);
+int c_lap_timer_count(void* handle);
+double c_lap_timer_total_dist(void* handle);
 
 #ifdef __cplusplus
 }
