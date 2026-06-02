@@ -4,6 +4,7 @@
 #include "codriver/root_cause.h"
 #include "codriver/coach_template.h"
 #include "codriver/lap_timer.h"
+#include "codriver/coord_transform.h"
 #include "codriver/types.h"
 #include <cstring>
 
@@ -97,5 +98,28 @@ int64_t c_lap_timer_process(void* h, double lat, double lon, int64_t ts, double*
 }
 int c_lap_timer_count(void* h) { if(!h)return 0; auto o=reinterpret_cast<codriver::LapTimer*>(h); return o->lapCount(); }
 double c_lap_timer_total_dist(void* h) { if(!h)return 0; auto o=reinterpret_cast<codriver::LapTimer*>(h); return o->totalDistance(); }
+
+// ============================================================
+// Coord Transform (Phase 2)
+// ============================================================
+void* c_coord_transform_create() { return new codriver::CoordTransform(); }
+void c_coord_transform_destroy(void* h) { if(!h)return; auto o=reinterpret_cast<codriver::CoordTransform*>(h); delete o; }
+int c_coord_transform_calibrate(void* h, double ax, double ay, double az) {
+    if(!h)return 0; auto o=reinterpret_cast<codriver::CoordTransform*>(h);
+    return o->calibrate(ax, ay, az) ? 1 : 0;
+}
+int c_coord_transform_transform(void* h, double ax, double ay, double az,
+                                 double* clg, double* clat, double* cv) {
+    if(!h||!clg||!clat||!cv)return -1;
+    auto o=reinterpret_cast<codriver::CoordTransform*>(h);
+    return o->transform(ax, ay, az, clg, clat, cv);
+}
+int c_coord_transform_is_calibrated(void* h) {
+    if(!h)return 0; auto o=reinterpret_cast<codriver::CoordTransform*>(h);
+    return o->isCalibrated()?1:0;
+}
+int c_coord_transform_detect_drift(void* /*h*/, double gps_hdg, double imu_hdg) {
+    return codriver::CoordTransform::detectDrift(gps_hdg, imu_hdg) ? 1 : 0;
+}
 
 } // extern "C"

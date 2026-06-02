@@ -63,6 +63,22 @@ int64_t c_lap_timer_process(void* handle, double lat, double lon, int64_t timest
 int c_lap_timer_count(void* handle);
 double c_lap_timer_total_dist(void* handle);
 
+// --- Coord Transform (Phase 2) ---
+void* c_coord_transform_create();
+void c_coord_transform_destroy(void* handle);
+// Calibrate phone orientation: pass averaged accelerometer reading when phone is stationary.
+// Returns 1 on success, 0 if gravity out of plausible range.
+int c_coord_transform_calibrate(void* handle, double ax, double ay, double az);
+// Transform phone-frame acceleration to car-frame G-force.
+// Returns 0 on success, -1 if not calibrated or null pointers.
+int c_coord_transform_transform(void* handle, double ax, double ay, double az,
+                                 double* car_long_g, double* car_lat_g,
+                                 double* car_vert_g);
+int c_coord_transform_is_calibrated(void* handle);
+// Detect orientation drift (GPS vs IMU heading mismatch). Static, no handle needed.
+// Returns 1 if drift > 15°, 0 otherwise. Pass nullptr for handle.
+int c_coord_transform_detect_drift(void* handle, double gps_heading, double imu_heading);
+
 #ifdef __cplusplus
 }
 #endif
