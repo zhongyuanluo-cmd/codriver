@@ -80,8 +80,30 @@ final class CCornerSpeedDelta extends Struct {
   @Array(32) external Array<Uint8> segId;
 }
 
+final class CPipelineResult extends Struct {
+  @Array(32)  external Array<Uint8> segId;
+  @Array(32)  external Array<Uint8> cause;
+  @Array(32)  external Array<Uint8> label;
+  @Array(16)  external Array<Uint8> conf;
+  @Array(256) external Array<Uint8> msg;
+  @Double() external double entrySpd;
+  @Double() external double minSpd;
+  @Double() external double exitSpd;
+  @Double() external double latG;
+  @Double() external double eDelta;
+  @Double() external double mDelta;
+  @Double() external double xDelta;
+  @Double() external double lDelta;
+  @Double() external double lossMs;
+  @Double() external double brakeDist;
+  @Double() external double brakePeak;
+  @Double() external double brakeDrop;
+  @Int32()  external int priority;
+  @Int32()  external int tier;
+}
+
 // ============================================================
-// EngineFFI — complete C API bindings (37/37: Phase 1 23 + Phase 2 coord 6 + brake 5 + corner_speed 3)
+// EngineFFI — complete C API bindings (41/41)
 // ============================================================
 
 class EngineFFI {
@@ -240,4 +262,23 @@ class EngineFFI {
           int Function(Pointer<Void>, Pointer<Utf8>, double, double, double, double,
               double, double, double, double, Pointer<CCornerSpeedDelta>)>('c_corner_speed_compare')(
           h, segId, refEntry, refMin, refExit, refLat, actEntry, actMin, actExit, actLat, out);
+
+  // ============================================================
+  // Analysis Pipeline — Phase 2.4 (4/4)
+  // ============================================================
+  static Pointer<Void> pipelineCreate() =>
+      lib.lookupFunction<Pointer<Void> Function(), Pointer<Void> Function()>('c_pipeline_create')();
+  static void pipelineDestroy(Pointer<Void> h) =>
+      lib.lookupFunction<Void Function(Pointer<Void>), void Function(Pointer<Void>)>('c_pipeline_destroy')(h);
+  static int pipelineProcessPoint(Pointer<Void> h, double lat, double lon, double dist,
+      double speed, double longG, double latG) =>
+      lib.lookupFunction<Int32 Function(Pointer<Void>, Double, Double, Double, Double, Double, Double),
+          int Function(Pointer<Void>, double, double, double, double, double, double)>('c_pipeline_process_point')(h, lat, lon, dist, speed, longG, latG);
+  static int pipelineGetResultCount(Pointer<Void> h) =>
+      lib.lookupFunction<Int32 Function(Pointer<Void>), int Function(Pointer<Void>)>('c_pipeline_get_result_count')(h);
+  static int pipelineGetResult(Pointer<Void> h, int idx, Pointer<CPipelineResult> out) =>
+      lib.lookupFunction<Int32 Function(Pointer<Void>, Int32, Pointer<CPipelineResult>),
+          int Function(Pointer<Void>, int, Pointer<CPipelineResult>)>('c_pipeline_get_result')(h, idx, out);
+  static void pipelineReset(Pointer<Void> h) =>
+      lib.lookupFunction<Void Function(Pointer<Void>), void Function(Pointer<Void>)>('c_pipeline_reset')(h);
 }

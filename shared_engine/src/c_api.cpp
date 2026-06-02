@@ -7,6 +7,7 @@
 #include "codriver/coord_transform.h"
 #include "codriver/brake_detector.h"
 #include "codriver/corner_speed_compare.h"
+#include "codriver/analysis_pipeline.h"
 #include "codriver/types.h"
 #include <cstring>
 
@@ -187,6 +188,45 @@ int c_corner_speed_compare(void* h,
     out->lat_delta = d.lat_g_delta;
     std::snprintf(out->seg_id, sizeof(out->seg_id), "%s", d.segment_id ? d.segment_id : "");
     return 0;
+}
+
+// ============================================================
+// Analysis Pipeline (Phase 2.4)
+// ============================================================
+void* c_pipeline_create() { return new codriver::AnalysisPipeline(); }
+void c_pipeline_destroy(void* h) { if(!h)return; auto o=reinterpret_cast<codriver::AnalysisPipeline*>(h); delete o; }
+int c_pipeline_process_point(void* h, double lat, double lon, double dist,
+                              double speed, double long_g, double lat_g) {
+    if(!h)return 0; auto o=reinterpret_cast<codriver::AnalysisPipeline*>(h);
+    codriver::FusedPoint fp{};
+    fp.latitude=lat; fp.longitude=lon; fp.track_distance_m=dist;
+    fp.speed_kmh=speed; fp.long_g=long_g; fp.lat_g=lat_g;
+    return o->processPoint(fp)?1:0;
+}
+int c_pipeline_get_result_count(void* h) {
+    if(!h)return 0; auto o=reinterpret_cast<codriver::AnalysisPipeline*>(h);
+    return o->getResultCount();
+}
+int c_pipeline_get_result(void* h, int idx, CPipelineResult* out) {
+    if(!h||!out||idx<0)return -1; auto o=reinterpret_cast<codriver::AnalysisPipeline*>(h);
+    auto r=o->getResult(idx); if(!r)return -1;
+    std::snprintf(out->seg_id,sizeof(out->seg_id),"%s",r->segment_id);
+    std::snprintf(out->cause,sizeof(out->cause),"%s",r->root_cause);
+    std::snprintf(out->label,sizeof(out->label),"%s",r->root_cause_label);
+    std::snprintf(out->conf,sizeof(out->conf),"%s",r->confidence);
+    std::snprintf(out->msg,sizeof(out->msg),"%s",r->coach_message);
+    out->entry_spd=r->entry_speed_kmh; out->min_spd=r->min_speed_kmh;
+    out->exit_spd=r->exit_speed_kmh; out->lat_g=r->max_lat_g;
+    out->e_delta=r->entry_delta_kmh; out->m_delta=r->min_delta_kmh;
+    out->x_delta=r->exit_delta_kmh; out->l_delta=r->lat_g_delta;
+    out->loss_ms=r->time_loss_ms;
+    out->brake_dist=r->brake_distance_m; out->brake_peak=r->brake_peak_decel_g;
+    out->brake_drop=r->brake_speed_drop_kmh;
+    out->priority=r->coach_priority; out->tier=r->coach_tier;
+    return 0;
+}
+void c_pipeline_reset(void* h) {
+    if(!h)return; auto o=reinterpret_cast<codriver::AnalysisPipeline*>(h); o->reset();
 }
 
 } // extern "C"

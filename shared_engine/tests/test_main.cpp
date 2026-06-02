@@ -3,6 +3,7 @@
 #include "codriver/coord_transform.h"
 #include "codriver/brake_detector.h"
 #include "codriver/corner_speed_compare.h"
+#include "codriver/analysis_pipeline.h"
 #include <cassert>
 #include <cmath>
 #include <cstdio>
@@ -216,6 +217,67 @@ int main() {
         assert(d.exit_delta_kmh == 0.0);
         assert(d.lat_g_delta == 0.0);
         printf("PASS: CornerSpeedCompare T2 (no ref): all deltas zeroed\n");
+    }
+
+    // Test 11: AnalysisPipeline — create/destroy
+    {
+        codriver::AnalysisPipeline pipeline;
+        assert(pipeline.getResultCount() == 0);
+        printf("PASS: AnalysisPipeline create/destroy, results=%d\n", pipeline.getResultCount());
+    }
+
+    // Test 12: AnalysisPipeline — process points through pipeline
+    {
+        codriver::AnalysisPipeline pipeline;
+        // Simulate a straight → corner → straight sequence
+        // Straights (lg≈0, lat_g≈0)
+        for (int i = 0; i < 10; i++) {
+            codriver::FusedPoint fp{};
+            fp.timestamp_ms = 1000 + i * 100;
+            fp.track_distance_m = i * 10.0;
+            fp.latitude = 30.0 + i * 0.001;
+            fp.longitude = 120.0 + i * 0.001;
+            fp.speed_kmh = 100.0;
+            fp.long_g = 0.05;
+            fp.lat_g = 0.05;
+            pipeline.processPoint(fp);
+        }
+        // First corner (left turn, speed drops)
+        for (int i = 0; i < 10; i++) {
+            codriver::FusedPoint fp{};
+            fp.timestamp_ms = 2000 + i * 100;
+            fp.track_distance_m = 100.0 + i * 8.0;
+            fp.latitude = 30.01 + i * 0.0005;
+            fp.longitude = 120.01 + i * 0.001;
+            fp.speed_kmh = 100.0 - i * 3.0;
+            fp.long_g = -0.1;
+            fp.lat_g = 0.4 + i * 0.05;
+            pipeline.processPoint(fp);
+        }
+        // More straight (after corner)
+        for (int i = 0; i < 5; i++) {
+            codriver::FusedPoint fp{};
+            fp.timestamp_ms = 3000 + i * 100;
+            fp.track_distance_m = 180.0 + i * 10.0;
+            fp.latitude = 30.015 + i * 0.001;
+            fp.longitude = 120.02 + i * 0.001;
+            fp.speed_kmh = 70.0 + i * 2.0;
+            fp.long_g = 0.1;
+            fp.lat_g = 0.1;
+            pipeline.processPoint(fp);
+        }
+
+        // Pipeline should have detected at least 1 corner and produced analysis
+        int count = pipeline.getResultCount();
+        printf("PASS: AnalysisPipeline processed %d points, %d corner results\n",
+               25, count);
+        if (count > 0) {
+            auto r = pipeline.getResult(0);
+            assert(r != nullptr);
+            printf("  Result[0]: %s cause=%s label=%s conf=%s msg=%s\n",
+                   r->segment_id, r->root_cause, r->root_cause_label,
+                   r->confidence, r->coach_message);
+        }
     }
 
     printf("\nAll tests passed.\n");

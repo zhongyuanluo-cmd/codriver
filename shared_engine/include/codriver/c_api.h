@@ -107,6 +107,20 @@ int c_corner_speed_compare(void* handle,
     double act_entry, double act_min, double act_exit, double act_lat,
     CCornerSpeedDelta* out);
 
+// --- Analysis Pipeline (Phase 2.4) ---
+typedef struct { char seg_id[32], cause[32], label[32], conf[16], msg[256];
+    double entry_spd, min_spd, exit_spd, lat_g;
+    double e_delta, m_delta, x_delta, l_delta, loss_ms;
+    double brake_dist, brake_peak, brake_drop; int priority, tier; } CPipelineResult;
+void* c_pipeline_create();
+void c_pipeline_destroy(void* handle);
+// Returns 1 if a corner analysis completed (result available via get_result)
+int c_pipeline_process_point(void* handle, double lat, double lon, double dist,
+                              double speed, double long_g, double lat_g);
+int c_pipeline_get_result_count(void* handle);
+int c_pipeline_get_result(void* handle, int index, CPipelineResult* out);
+void c_pipeline_reset(void* handle);
+
 #ifdef __cplusplus
 }
 #endif
