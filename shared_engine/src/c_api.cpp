@@ -5,6 +5,7 @@
 #include "codriver/coach_template.h"
 #include "codriver/lap_timer.h"
 #include "codriver/coord_transform.h"
+#include "codriver/brake_detector.h"
 #include "codriver/types.h"
 #include <cstring>
 
@@ -120,6 +121,41 @@ int c_coord_transform_is_calibrated(void* h) {
 }
 int c_coord_transform_detect_drift(void* /*h*/, double gps_hdg, double imu_hdg) {
     return codriver::CoordTransform::detectDrift(gps_hdg, imu_hdg) ? 1 : 0;
+}
+
+// ============================================================
+// Brake Detector (Phase 2.2)
+// ============================================================
+void* c_brake_detector_create() { return new codriver::BrakeDetector(); }
+void c_brake_detector_destroy(void* h) { if(!h)return; auto o=reinterpret_cast<codriver::BrakeDetector*>(h); delete o; }
+int c_brake_detector_process_point(void* h, double lat, double lon, double dist,
+                                    double speed, double long_g, int64_t ts) {
+    if(!h)return 0; auto o=reinterpret_cast<codriver::BrakeDetector*>(h);
+    codriver::FusedPoint fp{};
+    fp.latitude=lat; fp.longitude=lon; fp.track_distance_m=dist;
+    fp.speed_kmh=speed; fp.long_g=long_g; fp.timestamp_ms=ts;
+    return o->processPoint(fp)?1:0;
+}
+int c_brake_detector_get_event_count(void* h) {
+    if(!h)return 0; auto o=reinterpret_cast<codriver::BrakeDetector*>(h);
+    return o->getEventCount();
+}
+int c_brake_detector_get_event(void* h, int idx, CBrakeEvent* out) {
+    if(!h||!out||idx<0)return -1; auto o=reinterpret_cast<codriver::BrakeDetector*>(h);
+    auto e=o->getEvent(idx); if(!e)return -1;
+    out->brake_lat=e->brake_lat; out->brake_lon=e->brake_lon;
+    out->brake_dist=e->brake_distance_m; out->brake_spd=e->brake_speed_kmh;
+    out->brake_ts=e->brake_timestamp_ms;
+    out->peak_g=e->peak_decel_g; out->peak_dist=e->peak_decel_distance_m;
+    out->rel_lat=e->release_lat; out->rel_lon=e->release_lon;
+    out->rel_dist=e->release_distance_m; out->rel_spd=e->release_speed_kmh;
+    out->release_ts=e->release_timestamp_ms;
+    out->dur_ms=e->braking_duration_ms; out->trail_ms=e->trail_brake_duration_ms;
+    out->release_ms=e->brake_release_duration_ms; out->speed_drop=e->speed_drop_kmh;
+    return 0;
+}
+void c_brake_detector_reset(void* h) {
+    if(!h)return; auto o=reinterpret_cast<codriver::BrakeDetector*>(h); o->reset();
 }
 
 } // extern "C"

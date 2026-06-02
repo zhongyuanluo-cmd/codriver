@@ -44,8 +44,27 @@ final class CRootCause extends Struct {
   @Double()   external double loss;
 }
 
+final class CBrakeEvent extends Struct {
+  @Double() external double brakeLat;
+  @Double() external double brakeLon;
+  @Double() external double brakeDist;
+  @Double() external double brakeSpd;
+  @Double() external double peakG;
+  @Double() external double peakDist;
+  @Double() external double relLat;
+  @Double() external double relLon;
+  @Double() external double relDist;
+  @Double() external double relSpd;
+  @Double() external double durMs;
+  @Double() external double trailMs;
+  @Double() external double releaseMs;
+  @Double() external double speedDrop;
+  @Int64()  external int brakeTs;
+  @Int64()  external int releaseTs;
+}
+
 // ============================================================
-// EngineFFI — complete C API bindings (29/29: Phase 1 23 + Phase 2 coord_transform 6)
+// EngineFFI — complete C API bindings (34/34: Phase 1 23 + Phase 2 coord_transform 6 + brake_detector 5)
 // ============================================================
 
 class EngineFFI {
@@ -168,4 +187,23 @@ class EngineFFI {
   static int coordTransformDetectDrift(Pointer<Void> h, double gpsHdg, double imuHdg) =>
       lib.lookupFunction<Int32 Function(Pointer<Void>, Double, Double),
           int Function(Pointer<Void>, double, double)>('c_coord_transform_detect_drift')(h, gpsHdg, imuHdg);
+
+  // ============================================================
+  // Brake Detector — Phase 2.2 (5/5)
+  // ============================================================
+  static Pointer<Void> brakeDetectorCreate() =>
+      lib.lookupFunction<Pointer<Void> Function(), Pointer<Void> Function()>('c_brake_detector_create')();
+  static void brakeDetectorDestroy(Pointer<Void> h) =>
+      lib.lookupFunction<Void Function(Pointer<Void>), void Function(Pointer<Void>)>('c_brake_detector_destroy')(h);
+  static int brakeDetectorProcessPoint(Pointer<Void> h, double lat, double lon,
+      double dist, double speed, double longG, int ts) =>
+      lib.lookupFunction<Int32 Function(Pointer<Void>, Double, Double, Double, Double, Double, Int64),
+          int Function(Pointer<Void>, double, double, double, double, double, int)>('c_brake_detector_process_point')(h, lat, lon, dist, speed, longG, ts);
+  static int brakeDetectorGetEventCount(Pointer<Void> h) =>
+      lib.lookupFunction<Int32 Function(Pointer<Void>), int Function(Pointer<Void>)>('c_brake_detector_get_event_count')(h);
+  static int brakeDetectorGetEvent(Pointer<Void> h, int idx, Pointer<CBrakeEvent> out) =>
+      lib.lookupFunction<Int32 Function(Pointer<Void>, Int32, Pointer<CBrakeEvent>),
+          int Function(Pointer<Void>, int, Pointer<CBrakeEvent>)>('c_brake_detector_get_event')(h, idx, out);
+  static void brakeDetectorReset(Pointer<Void> h) =>
+      lib.lookupFunction<Void Function(Pointer<Void>), void Function(Pointer<Void>)>('c_brake_detector_reset')(h);
 }

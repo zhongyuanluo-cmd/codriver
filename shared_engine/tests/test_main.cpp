@@ -1,6 +1,7 @@
 #include "codriver/kalman_filter.h"
 #include "codriver/root_cause.h"
 #include "codriver/coord_transform.h"
+#include "codriver/brake_detector.h"
 #include <cassert>
 #include <cmath>
 #include <cstdio>
@@ -41,11 +42,12 @@ int main() {
         assert(ct.isCalibrated());
 
         double clg = 0, clat = 0, cv = 0;
-        // Simulate 0.5g forward acceleration
-        int rc = ct.transform(0.0, 0.0, -9.81 + 0.5 * 9.81, &clg, &clat, &cv);
+        // Simulate 0.5g forward acceleration (phone +X axis = car forward)
+        int rc = ct.transform(0.5 * 9.81, 0.0, -9.81, &clg, &clat, &cv);
         assert(rc == 0);
         // Forward accel should map to car longitudinal (~0.5g)
         assert(std::abs(clg - 0.5) < 0.1);
+        assert(std::abs(clat) < 0.1);
         printf("PASS: CoordTransform flat-phone: long_g=%.3f lat_g=%.3f vert_g=%.3f\n", clg, clat, cv);
     }
 
@@ -71,6 +73,70 @@ int main() {
         // 350° vs 10° → 20° difference (wrap-around)
         assert(codriver::CoordTransform::detectDrift(350.0, 10.0));
         printf("PASS: CoordTransform detectDrift: 20°=drift, 5°=ok, 350°vs10°=drift\n");
+    }
+
+    // Test 6: BrakeDetector — create/destroy
+    {
+        codriver::BrakeDetector bd;
+        assert(bd.getEventCount() == 0);
+        printf("PASS: BrakeDetector create/destroy, events=%d\n", bd.getEventCount());
+    }
+
+    // Test 7: BrakeDetector — single cruising point
+    {
+        codriver::BrakeDetector bd;
+        codriver::FusedPoint fp{};
+        fp.timestamp_ms = 1000;
+        fp.track_distance_m = 100.0;
+        fp.speed_kmh = 120.0;
+        fp.long_g = 0.05;
+        bd.processPoint(fp);
+        assert(bd.getEventCount() == 0);
+
+        // Start braking
+        fp.timestamp_ms = 2000;
+        fp.track_distance_m = 130.0;
+        fp.speed_kmh = 115.0;
+        fp.long_g = -0.4;
+        bd.processPoint(fp);
+        assert(bd.getEventCount() == 0);
+
+        // Peak braking
+        fp.timestamp_ms = 3000;
+        fp.track_distance_m = 160.0;
+        fp.speed_kmh = 95.0;
+        fp.long_g = -0.85;
+        bd.processPoint(fp);
+        assert(bd.getEventCount() == 0);
+        printf("PASS: BrakeDetector peak braking, events=%d\n", bd.getEventCount());
+
+        // Releasing → Finalizing (transition BRAKING→RELEASING→CRUISING)
+        fp.timestamp_ms = 4000;
+        fp.track_distance_m = 190.0;
+        fp.speed_kmh = 75.0;
+        fp.long_g = -0.05;
+        bd.processPoint(fp);  // BRAKING → RELEASING (lg > -0.10)
+
+        fp.timestamp_ms = 5000;
+        fp.track_distance_m = 220.0;
+        fp.speed_kmh = 70.0;
+        fp.long_g = 0.02;
+        bd.processPoint(fp);  // RELEASING → CRUISING (lg >= -0.05), event finalized!
+        assert(bd.getEventCount() == 1);
+
+        auto e = bd.getEvent(0);
+        assert(e != nullptr);
+        assert(e->brake_speed_kmh > 110.0);
+        assert(e->release_speed_kmh > 65.0);
+        assert(e->peak_decel_g < -0.8);
+        assert(e->speed_drop_kmh > 40.0);
+
+        printf("PASS: BrakeDetector finalized: %d events, brake at %.0fm, speed drop %.0f km/h, peak %.2fg\n",
+               bd.getEventCount(), e->brake_distance_m, e->speed_drop_kmh, e->peak_decel_g);
+
+        bd.reset();
+        assert(bd.getEventCount() == 0);
+        printf("PASS: BrakeDetector reset: %d events\n", bd.getEventCount());
     }
 
     printf("\nAll tests passed.\n");

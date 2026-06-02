@@ -79,6 +79,20 @@ int c_coord_transform_is_calibrated(void* handle);
 // Returns 1 if drift > 15°, 0 otherwise. Pass nullptr for handle.
 int c_coord_transform_detect_drift(void* handle, double gps_heading, double imu_heading);
 
+// --- Brake Detector (Phase 2.2) ---
+// C-side BrakeEvent struct (char arrays, no dangling pointers)
+typedef struct { double brake_lat, brake_lon, brake_dist, brake_spd, peak_g, peak_dist;
+    double rel_lat, rel_lon, rel_dist, rel_spd;
+    double dur_ms, trail_ms, release_ms, speed_drop; int64_t brake_ts, release_ts; } CBrakeEvent;
+void* c_brake_detector_create();
+void c_brake_detector_destroy(void* handle);
+// Returns 1 if a braking event was finalized, 0 otherwise
+int c_brake_detector_process_point(void* handle, double lat, double lon, double dist,
+                                    double speed, double long_g, int64_t ts);
+int c_brake_detector_get_event_count(void* handle);
+int c_brake_detector_get_event(void* handle, int index, CBrakeEvent* out);
+void c_brake_detector_reset(void* handle);
+
 #ifdef __cplusplus
 }
 #endif
