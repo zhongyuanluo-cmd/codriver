@@ -11,8 +11,9 @@ enum class CornerState { STRAIGHT, ENTERING, IN_CORNER, EXITING };
 struct CornerData {
     std::vector<double> lats, lons, distances, speeds, curvatures;
     double max_curv = 0; int max_idx = 0;
+    double cross_sum = 0;  // L-11: accumulated raw cross product for turn direction
     void reset() { lats.clear(); lons.clear(); distances.clear();
-                   speeds.clear(); curvatures.clear(); max_curv=0; max_idx=0; }
+                   speeds.clear(); curvatures.clear(); max_curv=0; max_idx=0; cross_sum=0; }
 };
 
 struct CornerDetector::Impl {
@@ -34,8 +35,7 @@ struct CornerDetector::Impl {
 CornerDetector::CornerDetector() : impl_(new Impl()) {}
 CornerDetector::~CornerDetector() { delete impl_; }
 
-void CornerDetector::processPoint(double dist, double lat, double lon,
-                                   double speed, double curvature) {
+void CornerDetector::processPoint(double dist, double lat, double lon, double speed) {
     // Update 3-point window
     auto& w = impl_->win;
     w.d[0] = w.d[1]; w.d[1] = w.d[2]; w.d[2] = dist;
@@ -43,13 +43,13 @@ void CornerDetector::processPoint(double dist, double lat, double lon,
     w.lon[0] = w.lon[1]; w.lon[1] = w.lon[2]; w.lon[2] = lon;
     if (++w.idx < 3) return;
 
-    // Calculate Menger Curvature: κ = 2|(P1-P0)×(P2-P1)|/(|P1-P0|·|P2-P1|·|P2-P0|)
+    // L-12: Menger Curvature computed internally
     double dx1 = w.lat[1]-w.lat[0], dy1 = w.lon[1]-w.lon[0];
     double dx2 = w.lat[2]-w.lat[1], dy2 = w.lon[2]-w.lon[1];
     double dx3 = w.lat[2]-w.lat[0], dy3 = w.lon[2]-w.lon[0];
     double d1 = std::sqrt(dx1*dx1+dy1*dy1), d2 = std::sqrt(dx2*dx2+dy2*dy2), d3 = std::sqrt(dx3*dx3+dy3*dy3);
-    double cross = std::abs(dx1*dy2 - dy1*dx2);
-    double curv = (d1*d2*d3 > 1e-9) ? (2.0*cross/(d1*d2*d3)) : 0.0;
+    double cross = dx1*dy2 - dy1*dx2;  // L-11: raw cross (not abs) for direction
+    double curv = (d1*d2*d3 > 1e-9) ? (2.0*std::abs(cross)/(d1*d2*d3)) : 0.0;
 
     auto& s = impl_->state;
     auto& cd = impl_->current;
@@ -62,11 +62,13 @@ void CornerDetector::processPoint(double dist, double lat, double lon,
             cd.lats.push_back(lat); cd.lons.push_back(lon);
             cd.distances.push_back(dist); cd.speeds.push_back(speed);
             cd.curvatures.push_back(curv);
+            cd.cross_sum = cross;  // L-11: start accumulating
         }
     } else if (s == CornerState::ENTERING || s == CornerState::IN_CORNER) {
         cd.lats.push_back(lat); cd.lons.push_back(lon);
         cd.distances.push_back(dist); cd.speeds.push_back(speed);
         cd.curvatures.push_back(curv);
+        cd.cross_sum += cross;  // L-11: accumulate raw cross
 
         if (curv > cd.max_curv) { cd.max_curv = curv; cd.max_idx = (int)cd.curvatures.size()-1; }
         if (s == CornerState::ENTERING && cd.curvatures.size() > 3) s = CornerState::IN_CORNER;
@@ -85,8 +87,8 @@ void CornerDetector::processPoint(double dist, double lat, double lon,
             seg.segment_id = impl_->id_store.back().c_str();
             seg.segment_type = "corner";
 
-            // Determine direction from cross product sign
-            seg.turn_direction = (cross > 0) ? "right" : "left";
+            // L-11: direction from accumulated cross sum (positive=right, negative=left)
+            seg.turn_direction = (cd.cross_sum > 0) ? "right" : "left";
 
             // Entry / Apex / Exit
             seg.entry_distance_m = cd.distances.front();

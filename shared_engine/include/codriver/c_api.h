@@ -31,7 +31,7 @@ void* c_corner_detector_create();
 void c_corner_detector_destroy(void* handle);
 // Returns: 1 if a new corner was detected, 0 otherwise
 int c_corner_detector_process_point(void* handle, double distance_m, double lat,
-                                     double lon, double speed_kmh, double curvature);
+                                     double lon, double speed_kmh);
 int c_corner_detector_get_segment_count(void* handle);
 // Fills out_segment at index (0-based). Returns 0 on success, -1 if index out of range.
 // Caller owns out_segment memory; c_api fills it.
