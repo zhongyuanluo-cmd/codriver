@@ -355,3 +355,52 @@ codriver/
 
 **Compilation verified**: MSVC Release build passes, test_engine 1/1
 
+---
+
+## R-008: Phase 2.1 coord_transform 审查
+
+- **审查来源**: monitor-review.md#R-008
+- **审查日期**: 2026-06-03
+- **修复日期**: 2026-06-03
+
+### P0 修复记录
+
+| 问题编号 | 修复状态 | 修复方式 | 修改文件 |
+|:---:|:---:|------|------|
+| P0-1 | ✅ 已修复 | `transform()` 未标定分支: 返回全零 + 返回码 -1，不再返回误导性 phone-frame 数据 | coord_transform.cpp |
+
+### P1 修复记录
+
+| 问题编号 | 修复状态 | 修复方式 | 修改文件 |
+|:---:|:---:|------|------|
+| P1-1 | ✅ 已修复 | 新增 `c_coord_transform_detect_drift` C API + engine_ffi.dart FFI 绑定 | c_api.h, c_api.cpp, engine_ffi.dart |
+| P1-2 | ✅ 已修复 | `calibrate()` 返回 `bool`（C++）/ `int` 1/0（C API），重力范围检查失败→返回 false/0 | coord_transform.h, coord_transform.cpp, c_api.cpp |
+| P1-3 | ✅ 已修复 | 从 `calibrate()` 签名中移除 gyro_x/y/z 死参数（全链路: .h, c_api.h, engine_ffi.dart） | coord_transform.h, c_api.h, engine_ffi.dart |
+
+### P2/P3 决策记录
+
+| 问题编号 | 决策 | 理由 |
+|:---:|------|------|
+| P2-1 | ⚠️ 未修 | 180° 反平行轴选择逻辑正确且安全（`abs(x)<0.9` 检查 + fallback），标准做法 |
+| P2-2 | ✅ 有效修复 | P0-1 使未标定路径返回零，gravity_mag 默认 9.81 不再用于计算 |
+| P2-3 | ✅ 已修复 | `detectDrift()` 声明为 `static`，C API 忽略 handle 参数 | 
+| P3-1 | ✅ 已修复 | 新增 3 个 coord_transform 测试: calibrate+transform / uncalibrated zeros / detectDrift | test_main.cpp |
+| P3-2 | ⚠️ 部分 | FFI 绑定正确暴露 `int` 返回值，应用层封装待后续 Phase |
+
+### 修复摘要
+
+**修改文件**: 6 个（coord_transform.h, coord_transform.cpp, c_api.h, c_api.cpp, engine_ffi.dart, test_main.cpp）
+**新增代码**: 95 行 / 删除代码: 42 行
+**绑定总数**: 28→29（+detectDrift）
+**测试总数**: 2→5（+3 coord_transform）
+
+**核心变更**:
+1. **P0-1 安全修复**: 未标定 `transform()` 返回零+失败码，消除数据误导风险
+2. **API 完整性**: detectDrift 暴露到 C API/FFI，calibrate 返回成功/失败
+3. **接口精简**: 移除 gyro 死参数，calibrate 签名从 6 参数→3 参数
+4. **测试覆盖**: coord_transform 从 0 测试→3 测试
+
+**编译验证**: MSVC Release build ✅, test_engine 5/5 ✅, dart analyze 0 error ✅
+
+**Monitor 闭环**: ✅ 已闭环 — monitor-review.md#R-008
+
