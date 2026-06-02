@@ -45,7 +45,7 @@ final class CRootCause extends Struct {
 }
 
 // ============================================================
-// EngineFFI — complete C API bindings (23/23)
+// EngineFFI — complete C API bindings (28/28: Phase 1 23 + Phase 2 coord_transform 5)
 // ============================================================
 
 class EngineFFI {
@@ -148,4 +148,22 @@ class EngineFFI {
       lib.lookupFunction<Int32 Function(Pointer<Void>), int Function(Pointer<Void>)>('c_lap_timer_count')(h);
   static double lapTimerTotalDist(Pointer<Void> h) =>
       lib.lookupFunction<Double Function(Pointer<Void>), double Function(Pointer<Void>)>('c_lap_timer_total_dist')(h);
+
+  // ============================================================
+  // Coord Transform — Phase 2 (5/5)
+  // ============================================================
+  static Pointer<Void> coordTransformCreate() =>
+      lib.lookupFunction<Pointer<Void> Function(), Pointer<Void> Function()>('c_coord_transform_create')();
+  static void coordTransformDestroy(Pointer<Void> h) =>
+      lib.lookupFunction<Void Function(Pointer<Void>), void Function(Pointer<Void>)>('c_coord_transform_destroy')(h);
+  static void coordTransformCalibrate(Pointer<Void> h, double ax, double ay, double az,
+                                        double gx, double gy, double gz) =>
+      lib.lookupFunction<Void Function(Pointer<Void>, Double, Double, Double, Double, Double, Double),
+          void Function(Pointer<Void>, double, double, double, double, double, double)>('c_coord_transform_calibrate')(h, ax, ay, az, gx, gy, gz);
+  static int coordTransformTransform(Pointer<Void> h, double ax, double ay, double az,
+                                       Pointer<Double> clg, Pointer<Double> clat, Pointer<Double> cv) =>
+      lib.lookupFunction<Int32 Function(Pointer<Void>, Double, Double, Double, Pointer<Double>, Pointer<Double>, Pointer<Double>),
+          int Function(Pointer<Void>, double, double, double, Pointer<Double>, Pointer<Double>, Pointer<Double>)>('c_coord_transform_transform')(h, ax, ay, az, clg, clat, cv);
+  static int coordTransformIsCalibrated(Pointer<Void> h) =>
+      lib.lookupFunction<Int32 Function(Pointer<Void>), int Function(Pointer<Void>)>('c_coord_transform_is_calibrated')(h);
 }

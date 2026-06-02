@@ -63,6 +63,19 @@ int64_t c_lap_timer_process(void* handle, double lat, double lon, int64_t timest
 int c_lap_timer_count(void* handle);
 double c_lap_timer_total_dist(void* handle);
 
+// --- Coord Transform (Phase 2) ---
+void* c_coord_transform_create();
+void c_coord_transform_destroy(void* handle);
+// Calibrate phone orientation: pass averaged accelerometer reading when phone is stationary
+void c_coord_transform_calibrate(void* handle, double ax, double ay, double az,
+                                  double gx, double gy, double gz);
+// Transform phone-frame acceleration to car-frame G-force
+// Returns 0 on success, -1 if output pointers are null
+int c_coord_transform_transform(void* handle, double ax, double ay, double az,
+                                 double* car_long_g, double* car_lat_g,
+                                 double* car_vert_g);
+int c_coord_transform_is_calibrated(void* handle);
+
 #ifdef __cplusplus
 }
 #endif
