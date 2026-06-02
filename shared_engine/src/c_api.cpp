@@ -251,6 +251,10 @@ int c_best_lap_count(void* h) {
     if(!h)return 0; auto o=reinterpret_cast<codriver::BestLapFinder*>(h);
     return o->getLapCount();
 }
+int c_best_lap_record_sector(void* h, int sidx, int64_t t) {
+    if(!h)return 0; auto o=reinterpret_cast<codriver::BestLapFinder*>(h);
+    o->recordSector(sidx, t); return 1;
+}
 void c_best_lap_reset(void* h) {
     if(!h)return; auto o=reinterpret_cast<codriver::BestLapFinder*>(h); o->reset();
 }

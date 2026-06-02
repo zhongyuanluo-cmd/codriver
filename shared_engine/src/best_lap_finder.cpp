@@ -76,6 +76,8 @@ const LapRecord* BestLapFinder::getLap(int index) const {
 }
 
 void BestLapFinder::recordSector(int sector_index, int64_t sector_time_ms) {
+    // P1-6: sector bounds check
+    if (sector_index < 0 || sector_index >= 64) return;
     impl_->has_sector_data = true;
     if (sector_index >= static_cast<int>(impl_->best_sector_times.size())) {
         impl_->best_sector_times.resize(sector_index + 1,

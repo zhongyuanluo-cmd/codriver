@@ -7,7 +7,7 @@ namespace codriver {
 
 // --- 弯速对比结果 ---
 struct CornerSpeedDelta {
-    const char* segment_id;          // matching TrackSegment.segment_id
+    char segment_id[32] = {0};   // matching TrackSegment.segment_id
 
     // Entry speed
     double actual_entry_kmh;

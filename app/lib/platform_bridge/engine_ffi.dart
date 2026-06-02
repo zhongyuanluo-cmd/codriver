@@ -306,6 +306,9 @@ class EngineFFI {
           int Function(Pointer<Void>, Pointer<CBestLapResult>)>('c_best_lap_get_best')(h, out);
   static int bestLapCount(Pointer<Void> h) =>
       lib.lookupFunction<Int32 Function(Pointer<Void>), int Function(Pointer<Void>)>('c_best_lap_count')(h);
+  static int bestLapRecordSector(Pointer<Void> h, int sectorIdx, int sectorTimeMs) =>
+      lib.lookupFunction<Int32 Function(Pointer<Void>, Int32, Int64),
+          int Function(Pointer<Void>, int, int)>('c_best_lap_record_sector')(h, sectorIdx, sectorTimeMs);
   static void bestLapReset(Pointer<Void> h) =>
       lib.lookupFunction<Void Function(Pointer<Void>), void Function(Pointer<Void>)>('c_best_lap_reset')(h);
 }

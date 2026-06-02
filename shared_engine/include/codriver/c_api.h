@@ -128,6 +128,7 @@ void c_best_lap_destroy(void* handle);
 int c_best_lap_record(void* handle, int64_t lap_time_ms, double lap_dist_m);
 int c_best_lap_get_best(void* handle, CBestLapResult* out);
 int c_best_lap_count(void* handle);
+int c_best_lap_record_sector(void* handle, int sector_index, int64_t sector_time_ms);
 void c_best_lap_reset(void* handle);
 
 #ifdef __cplusplus

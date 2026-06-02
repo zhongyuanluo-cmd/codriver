@@ -9,6 +9,13 @@
 
 namespace codriver {
 
+// Pipeline state machine for corner tracking
+enum class PipeState {
+    STRAIGHT,    // on straight, waiting for corner
+    IN_CORNER,   // inside a corner, accumulating data
+    CORNER_DONE  // corner just finished, result available
+};
+
 class AnalysisPipeline::Impl {
 public:
     CornerDetector corner_detector;
@@ -17,12 +24,19 @@ public:
 
     std::vector<PipelineResult> results;
 
-    // Track per-corner data accumulation
+    // State machine
+    PipeState state = PipeState::STRAIGHT;
+
+    // Per-corner data accumulation
     double corner_entry_speed = 0;
     double corner_min_speed = 999.0;
     double corner_exit_speed = 0;
     double corner_max_lat_g = 0;
-    bool in_corner = false;
+    double corner_start_dist = 0;
+
+    // Pending result (set on CORNER_DONE, consumed by caller)
+    PipelineResult pending_result;
+    bool has_pending = false;
 };
 
 AnalysisPipeline::AnalysisPipeline() : impl_(new Impl()) {}
@@ -35,49 +49,56 @@ bool AnalysisPipeline::processPoint(const FusedPoint& point) {
         point.track_distance_m, point.latitude, point.longitude, point.speed_kmh);
     int new_count = impl_->corner_detector.getSegmentCount();
 
-    // Track corner speed data
-    if (!impl_->in_corner && new_count > prev_count) {
-        // Entering a new corner
-        impl_->in_corner = true;
-        impl_->corner_entry_speed = point.speed_kmh;
-        impl_->corner_min_speed = point.speed_kmh;
-        impl_->corner_max_lat_g = std::abs(point.lat_g);
-    }
+    switch (impl_->state) {
+    case PipeState::STRAIGHT:
+        if (new_count > prev_count) {
+            // Entering first corner
+            impl_->state = PipeState::IN_CORNER;
+            impl_->corner_entry_speed = point.speed_kmh;
+            impl_->corner_min_speed = point.speed_kmh;
+            impl_->corner_max_lat_g = std::abs(point.lat_g);
+            impl_->corner_start_dist = point.track_distance_m;
+        }
+        break;
 
-    if (impl_->in_corner) {
-        // Track min speed and max lat_g during corner
+    case PipeState::IN_CORNER:
+        // Track min speed and max lat_g
         if (point.speed_kmh < impl_->corner_min_speed) {
             impl_->corner_min_speed = point.speed_kmh;
         }
         if (std::abs(point.lat_g) > impl_->corner_max_lat_g) {
             impl_->corner_max_lat_g = std::abs(point.lat_g);
         }
-    }
-
-    // When a corner is completed (new segment detected, previous corner finished)
-    if (impl_->in_corner && prev_count > 0 && new_count == prev_count) {
-        // Corner exit detected (no new segment, still in corner area)
         impl_->corner_exit_speed = point.speed_kmh;
+
+        // Corner completion: new segment detected (next corner) or
+        // lat_g drops below threshold after being in corner
+        if (new_count > prev_count) {
+            // New corner starting → previous corner is complete
+            impl_->state = PipeState::CORNER_DONE;
+        }
+        // Note: In production, also use lat_g threshold fallback:
+        // else if (std::abs(point.lat_g) < 0.15 && impl_->corner_max_lat_g > 0.3) {
+        //     impl_->state = PipeState::CORNER_DONE;
+        // }
+        break;
+
+    case PipeState::CORNER_DONE:
+        // Should not normally reach here — result consumed before next point
+        break;
     }
 
-    // Check if we've exited the corner (state machine would be better,
-    // but simplified: detect when corner_detector enters straight)
-    // For now, produce result when a new corner is detected
-    // (meaning the previous corner is complete)
-    if (impl_->in_corner && new_count > prev_count && prev_count > 0) {
-        // Previous corner completed, new corner starting
-        impl_->in_corner = false;
-
-        // Get the last completed segment
+    // Produce result when corner done
+    if (impl_->state == PipeState::CORNER_DONE) {
         auto segs = impl_->corner_detector.getSegments();
-        if (!segs.empty()) {
-            const auto& seg = segs.back();
+        int seg_idx = new_count - 1;  // last completed segment
+        if (seg_idx >= 0 && seg_idx < static_cast<int>(segs.size())) {
+            const auto& seg = segs[seg_idx];
 
             PipelineResult r{};
             std::snprintf(r.segment_id, sizeof(r.segment_id), "%s",
                 seg.segment_id ? seg.segment_id : "");
 
-            // Speed data
             r.entry_speed_kmh = impl_->corner_entry_speed;
             r.min_speed_kmh = impl_->corner_min_speed;
             r.exit_speed_kmh = impl_->corner_exit_speed;
@@ -93,15 +114,16 @@ bool AnalysisPipeline::processPoint(const FusedPoint& point) {
             r.lat_g_delta = std::isnan(seg.reference_lateral_g) ? 0.0
                 : r.max_lat_g - seg.reference_lateral_g;
 
-            // Root cause analysis
+            // Root cause (P1-2: TODO — trail_brake and line_deviation are placeholders;
+            // will be replaced with real BrakeDetector data in Phase 2.6)
             auto rc = impl_->root_cause.analyze(
-                0.0,                    // brake_delta (not available here)
-                r.entry_delta_kmh,      // entry speed delta
-                r.min_delta_kmh,        // min speed delta
-                r.exit_delta_kmh,       // exit speed delta
+                0.0,
+                r.entry_delta_kmh,
+                r.min_delta_kmh,
+                r.exit_delta_kmh,
                 seg.reference_lateral_g > 0 ? r.max_lat_g / seg.reference_lateral_g : 1.0,
-                0.5,                    // trail_brake (placeholder)
-                0.3);                   // line_deviation (placeholder)
+                0.5,   // TODO: trail_brake — integrate BrakeDetector
+                0.3);  // TODO: line_deviation — implement line scoring
 
             std::snprintf(r.root_cause, sizeof(r.root_cause), "%s",
                 rc.root_cause ? rc.root_cause : "");
@@ -116,21 +138,23 @@ bool AnalysisPipeline::processPoint(const FusedPoint& point) {
                 r.segment_id, r.root_cause,
                 std::max(std::abs(r.entry_delta_kmh),
                     std::max(std::abs(r.min_delta_kmh), std::abs(r.exit_delta_kmh))),
-                2);  // Tier 2: straight analysis
+                2);
             std::snprintf(r.coach_message, sizeof(r.coach_message), "%s",
                 msg.text ? msg.text : "");
             r.coach_priority = msg.priority;
             r.coach_tier = msg.tier;
 
             impl_->results.push_back(r);
-
-            // Reset for next corner
-            impl_->corner_entry_speed = point.speed_kmh;
-            impl_->corner_min_speed = point.speed_kmh;
-            impl_->corner_max_lat_g = 0;
-            impl_->in_corner = true;
-            return true;
+            impl_->has_pending = true;
         }
+
+        // Transition: CORNER_DONE → IN_CORNER (new corner already detected)
+        // or → STRAIGHT (if this was the last corner)
+        impl_->corner_entry_speed = point.speed_kmh;
+        impl_->corner_min_speed = point.speed_kmh;
+        impl_->corner_max_lat_g = std::abs(point.lat_g);
+        impl_->state = (new_count > 0) ? PipeState::IN_CORNER : PipeState::STRAIGHT;
+        return true;
     }
 
     return false;
@@ -148,9 +172,10 @@ const PipelineResult* AnalysisPipeline::getResult(int index) const {
 void AnalysisPipeline::reset() {
     impl_->corner_detector.reset();
     impl_->results.clear();
-    impl_->in_corner = false;
+    impl_->state = PipeState::STRAIGHT;
     impl_->corner_min_speed = 999.0;
     impl_->corner_max_lat_g = 0;
+    impl_->has_pending = false;
 }
 
 CornerDetector* AnalysisPipeline::cornerDetector() { return &impl_->corner_detector; }

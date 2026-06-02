@@ -447,3 +447,77 @@ codriver/
 - **构建验证**: MSVC Release 0 errors, test_engine 10/10 pass, dart analyze 0 errors
 - **Monitor 闭环**: ✅ 全部闭环 — monitor-review.md#R-009
 
+---
+
+## R-010: Phase 2.3 CornerSpeedCompare 审查
+
+- **审查来源**: monitor-review.md#R-010
+- **审查分支**: feat/phase-2.3-corner-speed @ ecabbe3
+- **构建**: ✅ MSVC Release 0 errors | ✅ test_engine.exe 12/12 pass
+- **状态**: ❌ 不通过
+
+### 待修复问题
+
+| # | 级别 | 状态 | 描述 | 涉及文件 |
+|---|:----:|:----:|------|----------|
+| P0-1 | P0 | ⬜ | `CornerSpeedDelta::segment_id` 使用 `const char*` — 悬挂指针风险 | corner_speed_compare.h |
+| P0-2 | P0 | ⬜ | `id_buffer` vector resize 使所有已返回指针悬挂 — 内存安全定时炸弹 | corner_speed_compare.cpp |
+| P1-1 | P1 | ⬜ | `compareAll()` 未检查 `segment_count <= 0` | corner_speed_compare.cpp |
+
+### 修复建议
+
+- P0-1+P0-2: 与 R-009 L-11 同类修复 — `segment_id` 改为 `char[32]`，删除 `id_buffer`/`copyId()`
+- P1-1: `compareAll()` 增加 `segment_count <= 0` 保护
+
+---
+
+## R-011: Phase 2.4 AnalysisPipeline 审查
+
+- **审查来源**: monitor-review.md#R-011
+- **审查分支**: feat/phase-2.4-pipeline @ 31afbd5
+- **构建**: ✅ MSVC Release 0 errors | ⚠️ test_engine.exe 14/14 pass 但 Test 12 返回 0 corner results
+- **状态**: ❌ 不通过
+
+### 待修复问题
+
+| # | 级别 | 状态 | 描述 | 涉及文件 |
+|---|:----:|:----:|------|----------|
+| P0-3 | P0 | ⬜ | **Pipeline 不产出结果**: 弯道完成检测逻辑缺陷，`new_count > prev_count && prev_count > 0` 条件导致首弯永远无法完成 | analysis_pipeline.cpp |
+| P1-2 | P1 | ⬜ | 硬编码占位值: brake_delta=0.0, trail_brake=0.5, line_deviation=0.3 | analysis_pipeline.cpp |
+| P1-3 | P1 | ⬜ | 弯道出口检测脆弱: 注释自述 "state machine would be better" | analysis_pipeline.cpp |
+| P1-4 | P1 | ⬜ | 首弯入口速度不准确: 使用当前点速度而非实际弯道入口速度 | analysis_pipeline.cpp |
+| P2-1 | P2 | ⬜ | Test 12 断言太弱: count=0 但测试仍 PASS | test_main.cpp |
+
+### 修复建议
+
+- P0-3: 重写弯道完成检测 — 使用状态机或添加 `finalize()` 方法 flush 最后一个弯
+- P1-2: 标注占位值为 TODO 或在输出中标记 "preliminary"
+- P1-3: 实现完整状态机
+- P1-4: 使用 TrackSegment.start_distance 对应速度
+- P2-1: 修复测试断言
+
+---
+
+## R-012: Phase 2.5 BestLapFinder 审查
+
+- **审查来源**: monitor-review.md#R-012
+- **审查分支**: feat/phase-2.5-best-lap @ edecdb8
+- **构建**: ✅ MSVC Release 0 errors | ✅ test_engine.exe 16/16 pass
+- **状态**: ❌ 不通过
+
+### 待修复问题
+
+| # | 级别 | 状态 | 描述 | 涉及文件 |
+|---|:----:|:----:|------|----------|
+| P1-5 | P1 | ⬜ | C API 缺失 `recordSector` 和 `getLap` 暴露 — FFI 层无法使用 optimal lap 功能 | c_api.h, c_api.cpp, engine_ffi.dart |
+| P1-6 | P1 | ⬜ | `recordSector()` 无边界检查 — sector_index 负数或极大值导致无限增长 | best_lap_finder.cpp |
+| P2-2 | P2 | ⬜ | CBestLapResult int 范围未文档化 | c_api.h |
+| P2-3 | P2 | ⬜ | 空 laps 时 getBest() 无法区分"无数据"和"最快圈 0ms" | best_lap_finder.cpp |
+
+### 修复建议
+
+- P1-5: 添加 `c_best_lap_record_sector()` 和 `c_best_lap_get_lap()` C API + FFI 绑定
+- P1-6: `recordSector()` 增加 `sector_index < 0 || sector_index >= 64` 边界检查
+- P2-2: 添加注释
+- P2-3: 在 BestLapResult 加 `valid` 标志或文档化 total_laps==0 为"无数据"
+

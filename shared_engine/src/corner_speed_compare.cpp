@@ -7,21 +7,7 @@ namespace codriver {
 
 class CornerSpeedCompare::Impl {
 public:
-    // String storage for segment_id copies (prevents dangling pointers)
-    std::vector<char> id_buffer;
-    size_t id_offset = 0;
-
-    const char* copyId(const char* src) {
-        if (!src || !src[0]) return "";
-        size_t len = std::strlen(src) + 1;
-        if (id_offset + len > id_buffer.size()) {
-            id_buffer.resize(id_offset + len + 256);
-        }
-        std::memcpy(&id_buffer[id_offset], src, len);
-        const char* result = &id_buffer[id_offset];
-        id_offset += len;
-        return result;
-    }
+    // (no state needed — segment_id is now fixed char array)
 };
 
 CornerSpeedCompare::CornerSpeedCompare() : impl_(new Impl()) {}
@@ -36,7 +22,8 @@ CornerSpeedDelta CornerSpeedCompare::compare(
 {
     CornerSpeedDelta d{};
 
-    d.segment_id = impl_->copyId(segment.segment_id);
+    std::snprintf(d.segment_id, sizeof(d.segment_id), "%s",
+        segment.segment_id ? segment.segment_id : "");
 
     // Entry speed
     d.actual_entry_kmh = actual_entry_kmh;
@@ -71,8 +58,8 @@ int CornerSpeedCompare::compareAll(
     const double* actual_exit, const double* actual_lat_g,
     CornerSpeedDelta* results, int max_results)
 {
-    if (!segments || !actual_entry || !actual_min || !actual_exit ||
-        !actual_lat_g || !results || max_results <= 0) {
+    if (!segments || segment_count <= 0 || !actual_entry || !actual_min ||
+        !actual_exit || !actual_lat_g || !results || max_results <= 0) {
         return 0;
     }
 

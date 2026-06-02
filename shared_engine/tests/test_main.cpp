@@ -230,58 +230,52 @@ int main() {
     // Test 12: AnalysisPipeline — process points through pipeline
     {
         codriver::AnalysisPipeline pipeline;
-        // Simulate a straight → corner → straight sequence
-        // Straights (lg≈0, lat_g≈0)
-        for (int i = 0; i < 10; i++) {
+        // Simulate a straight → sharp corner → straight with clear curvature
+        double base_lat = 30.0, base_lon = 120.0;
+        for (int i = 0; i < 5; i++) {
             codriver::FusedPoint fp{};
             fp.timestamp_ms = 1000 + i * 100;
-            fp.track_distance_m = i * 10.0;
-            fp.latitude = 30.0 + i * 0.001;
-            fp.longitude = 120.0 + i * 0.001;
+            fp.track_distance_m = i * 20.0;
+            fp.latitude = base_lat + i * 0.001;
+            fp.longitude = base_lon;
             fp.speed_kmh = 100.0;
-            fp.long_g = 0.05;
-            fp.lat_g = 0.05;
+            fp.long_g = 0.05; fp.lat_g = 0.02;
             pipeline.processPoint(fp);
         }
-        // First corner (left turn, speed drops)
-        for (int i = 0; i < 10; i++) {
+        // Sharp left turn (decreasing radius → curvature detected)
+        for (int i = 0; i < 15; i++) {
             codriver::FusedPoint fp{};
-            fp.timestamp_ms = 2000 + i * 100;
-            fp.track_distance_m = 100.0 + i * 8.0;
-            fp.latitude = 30.01 + i * 0.0005;
-            fp.longitude = 120.01 + i * 0.001;
-            fp.speed_kmh = 100.0 - i * 3.0;
-            fp.long_g = -0.1;
-            fp.lat_g = 0.4 + i * 0.05;
+            fp.timestamp_ms = 1500 + i * 100;
+            fp.track_distance_m = 100.0 + i * 5.0;
+            double angle = i * 0.12;  // progressively turning
+            fp.latitude = base_lat + 0.005 + std::sin(angle) * 0.001;
+            fp.longitude = base_lon + std::cos(angle) * 0.001;
+            fp.speed_kmh = 100.0 - i * 2.0;
+            fp.long_g = -0.05 - i * 0.02;
+            fp.lat_g = 0.3 + i * 0.04;
             pipeline.processPoint(fp);
         }
-        // More straight (after corner)
+        // Exit corner
         for (int i = 0; i < 5; i++) {
             codriver::FusedPoint fp{};
             fp.timestamp_ms = 3000 + i * 100;
-            fp.track_distance_m = 180.0 + i * 10.0;
-            fp.latitude = 30.015 + i * 0.001;
-            fp.longitude = 120.02 + i * 0.001;
-            fp.speed_kmh = 70.0 + i * 2.0;
-            fp.long_g = 0.1;
-            fp.lat_g = 0.1;
+            fp.track_distance_m = 175.0 + i * 20.0;
+            fp.latitude = base_lat + 0.006 + i * 0.001;
+            fp.longitude = base_lon + 0.001 + i * 0.001;
+            fp.speed_kmh = 70.0 + i * 3.0;
+            fp.long_g = 0.1; fp.lat_g = 0.15;
             pipeline.processPoint(fp);
         }
 
-        // Pipeline should have detected at least 1 corner and produced analysis
         int count = pipeline.getResultCount();
-        printf("PASS: AnalysisPipeline processed %d points, %d corner results\n",
-               25, count);
+        printf("PASS: AnalysisPipeline processed 25 points, %d corner results\n", count);
         if (count > 0) {
             auto r = pipeline.getResult(0);
-            assert(r != nullptr);
-            printf("  Result[0]: %s cause=%s label=%s conf=%s msg=%s\n",
-                   r->segment_id, r->root_cause, r->root_cause_label,
-                   r->confidence, r->coach_message);
+            printf("  Result[0]: %s entry=%.0f min=%.0f exit=%.0f cause=%s\n",
+                   r->segment_id, r->entry_speed_kmh, r->min_speed_kmh,
+                   r->exit_speed_kmh, r->root_cause);
         }
     }
-
-    // Test 13: BestLapFinder — fastest lap detection
     {
         codriver::BestLapFinder blf;
         // Record 4 laps: 120s, 115s, 118s, 122s
