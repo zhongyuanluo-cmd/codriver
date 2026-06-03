@@ -73,9 +73,14 @@ class SpeedChart extends StatelessWidget {
             }).toList(),
           ),
         ),
+        extraLinesData: _corners != null && _corners!.isNotEmpty
+            ? ExtraLinesData(verticalLines: _buildCornerLines())
+            : null,
       ),
     );
   }
+
+  List<CornerZone>? get _corners => corners;
 
   List<LineChartBarData> _buildLineBars() {
     final bars = <LineChartBarData>[];
@@ -111,6 +116,37 @@ class SpeedChart extends StatelessWidget {
     return bars;
   }
 
+  List<VerticalLine> _buildCornerLines() {
+    final lines = <VerticalLine>[];
+    for (final c in _corners!) {
+      lines.add(VerticalLine(
+        x: c.startDistance,
+        color: Colors.orange.withValues(alpha: 0.4),
+        strokeWidth: 1.5,
+        dashArray: [4, 4],
+      ));
+      lines.add(VerticalLine(
+        x: c.endDistance,
+        color: Colors.orange.withValues(alpha: 0.4),
+        strokeWidth: 1.5,
+        dashArray: [4, 4],
+      ));
+      // Label above the corner zone
+      lines.add(VerticalLine(
+        x: (c.startDistance + c.endDistance) / 2,
+        color: Colors.transparent,
+        strokeWidth: 0,
+        label: VerticalLineLabel(
+          show: true,
+          alignment: Alignment.topCenter,
+          labelResolver: (_) => c.label,
+          style: const TextStyle(color: Colors.orange, fontSize: 11, fontWeight: FontWeight.bold),
+        ),
+      ));
+    }
+    return lines;
+  }
+
   double _calcXInterval() {
     final max = currentLap.isNotEmpty ? currentLap.last.distance : 4000;
     if (max <= 1000) return 200;
@@ -120,6 +156,8 @@ class SpeedChart extends StatelessWidget {
 }
 
 /// A single speed data point.
+// TODO(Phase 3): Replace with API-aligned SpeedCurvePoint{distance, currentSpeed, referenceSpeed}
+// to match backend/app/models/schemas.py SpeedCurvePoint
 class SpeedPoint {
   final double distance;
   final double speed;
@@ -127,6 +165,8 @@ class SpeedPoint {
 }
 
 /// A corner zone on the track (for annotating the chart).
+// TODO(Phase 3): Replace with API-aligned CornerAnalysis model matching
+// backend/app/models/schemas.py CornerAnalysis (15 fields)
 class CornerZone {
   final double startDistance;
   final double endDistance;

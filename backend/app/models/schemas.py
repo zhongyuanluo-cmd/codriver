@@ -64,6 +64,8 @@ class LapRecord(BaseModel):
     lap_time_ms: int
     lap_distance_m: float
     avg_speed_kmh: float
+    is_valid: bool = True
+    is_personal_best: bool = False
     timestamp_start: datetime | None = None
     timestamp_end: datetime | None = None
 
@@ -87,6 +89,10 @@ class CornerAnalysis(BaseModel):
     time_loss_ms: float = 0.0
     coach_message: str = ""
     coach_priority: int = 0
+    brake_distance_m: float = 0.0
+    brake_peak_g: float = 0.0
+    speed_drop_kmh: float = 0.0
+    feedback_tier: int = 2
 
 
 class LapAnalysis(BaseModel):

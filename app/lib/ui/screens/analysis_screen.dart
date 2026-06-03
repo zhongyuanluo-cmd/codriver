@@ -9,6 +9,10 @@ class AnalysisScreen extends StatefulWidget {
 }
 
 class _AnalysisScreenState extends State<AnalysisScreen> {
+  // TODO(Phase 3): Replace mock data with Backend API call to /api/analysis/sessions/{id}
+  // Current mock logic duplicates backend/app/api/analysis.py _mock_speed_curve().
+  // TODO(Phase 3): Replace SpeedPoint/CornerZone with API-aligned models.
+
   // Mock data — will be replaced with real pipeline data in Phase 2.7
   static final _mockCurrent = List.generate(40, (i) {
     final d = i * 100.0;

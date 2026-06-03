@@ -4,7 +4,7 @@ from app.models.schemas import (
     AnalyzeResponse, SessionSummary, LapAnalysis, CornerAnalysis, SpeedCurvePoint
 )
 
-router = APIRouter(prefix="/api/sessions", tags=["analysis"])
+router = APIRouter(prefix="/api/analysis", tags=["analysis"])
 
 
 def _mock_corner_analysis(seg_id: str, base_speed: float) -> CornerAnalysis:
@@ -97,7 +97,7 @@ def _mock_speed_curve() -> list[SpeedCurvePoint]:
     return curve
 
 
-@router.get("/{session_id}/analyze", response_model=AnalyzeResponse)
+@router.get("/sessions/{session_id}", response_model=AnalyzeResponse)
 async def analyze_session(session_id: str):
     """
     Analyze a completed session.
@@ -108,8 +108,7 @@ async def analyze_session(session_id: str):
     Phase 2.7: Currently returns mock data. Will integrate C++ AnalysisPipeline
     via FFI in Phase 3.
     """
-    if not session_id:
-        raise HTTPException(status_code=400, detail="session_id required")
+    # TODO(Phase 3): Check if session exists in DB, return 404 if not found
 
     # TODO: Phase 3 — load actual FusedPoint data from Supabase/DB
     # TODO: Phase 3 — call C++ AnalysisPipeline via FFI/c_types
