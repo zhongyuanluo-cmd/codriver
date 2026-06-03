@@ -1191,9 +1191,9 @@ fix/R-010-012 @ 9d9616d (10 files, +333 -97)
 
 ### 迭代项追踪
 
-| 编号 | 描述 | 目标迭代 | 优先级 |
-|------|------|----------|:------:|
-| ITER-1 | Pipeline `finalize()` 方法 flush 最后弯道 | Phase 2.4+ | P1 |
-| ITER-2 | `c_best_lap_get_lap` C API + FFI 绑定 | Phase 2.5+ | P2 |
-| ITER-3 | P2-2/P2-3 注释补充 | Phase 2.5+ | P3 |
-| ITER-4 | P1-4 精确 entry_speed（segment 起始位置速度） | Phase 2.4+ | P2 |
+| 编号 | 描述 | 目标迭代 | 优先级 | 状态 |
+|------|------|----------|:------:|:------:|
+| ITER-1 | Pipeline `finalize()` 方法 flush 最后弯道 | Phase 2.4+ | P1 | ✅ 已修复 (fix/ITER-1-2) |
+| ITER-2 | `c_best_lap_get_lap` C API + FFI 绑定 | Phase 2.5+ | P2 | ✅ 已修复 (fix/ITER-1-2) |
+| ITER-3 | P2-2/P2-3 注释补充 | Phase 2.5+ | P3 | |
+| ITER-4 | P1-4 精确 entry_speed（segment 起始位置速度） | Phase 2.4+ | P2 | |

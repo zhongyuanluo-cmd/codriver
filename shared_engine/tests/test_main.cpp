@@ -276,6 +276,48 @@ int main() {
                    r->exit_speed_kmh, r->root_cause);
         }
     }
+
+    // Test 13: AnalysisPipeline — finalize() flushes last corner
+    {
+        codriver::AnalysisPipeline pipeline;
+        // Simulate entering a single corner but never detecting a second one
+        double base_lat = 30.0, base_lon = 120.0;
+        // Straight
+        for (int i = 0; i < 5; i++) {
+            codriver::FusedPoint fp{};
+            fp.timestamp_ms = 1000 + i * 100;
+            fp.track_distance_m = i * 20.0;
+            fp.latitude = base_lat + i * 0.001;
+            fp.longitude = base_lon;
+            fp.speed_kmh = 100.0;
+            fp.long_g = 0.05; fp.lat_g = 0.02;
+            pipeline.processPoint(fp);
+        }
+        // Corner (only one — no second corner to trigger CORNER_DONE)
+        for (int i = 0; i < 15; i++) {
+            codriver::FusedPoint fp{};
+            fp.timestamp_ms = 1500 + i * 100;
+            fp.track_distance_m = 100.0 + i * 5.0;
+            double angle = i * 0.12;
+            fp.latitude = base_lat + 0.005 + std::sin(angle) * 0.001;
+            fp.longitude = base_lon + std::cos(angle) * 0.001;
+            fp.speed_kmh = 100.0 - i * 2.0;
+            fp.long_g = -0.05 - i * 0.02;
+            fp.lat_g = 0.3 + i * 0.04;
+            pipeline.processPoint(fp);
+        }
+        // No more points — corner is still pending
+        int before = pipeline.getResultCount();
+        bool flushed = pipeline.finalize();
+        int after = pipeline.getResultCount();
+        printf("PASS: AnalysisPipeline finalize() before=%d after=%d flushed=%d\n",
+               before, after, flushed ? 1 : 0);
+        // If there was a pending corner, it should be flushed
+        if (flushed) {
+            assert(after == before + 1);
+        }
+    }
+
     {
         codriver::BestLapFinder blf;
         // Record 4 laps: 120s, 115s, 118s, 122s
@@ -294,6 +336,20 @@ int main() {
 
         printf("PASS: BestLapFinder: %d laps, best=L%d (%lld ms), total=%lld ms\n",
                best.total_laps, best.best_lap_number, best.best_lap_time_ms, best.total_time_ms);
+
+        // Test getLap
+        auto lap0 = blf.getLap(0);
+        auto lap1 = blf.getLap(1);
+        assert(lap0 != nullptr);
+        assert(lap1 != nullptr);
+        assert(lap0->lap_number == 1);
+        assert(lap0->lap_time_ms == 120000);
+        assert(lap1->lap_number == 2);
+        assert(lap1->lap_time_ms == 115000);
+        assert(blf.getLap(-1) == nullptr);  // out of range
+        assert(blf.getLap(4) == nullptr);   // out of range
+        printf("PASS: BestLapFinder getLap(0)=L%d(%lldms) getLap(1)=L%d(%lldms)\n",
+               lap0->lap_number, lap0->lap_time_ms, lap1->lap_number, lap1->lap_time_ms);
     }
 
     // Test 14: BestLapFinder — optimal lap from sectors

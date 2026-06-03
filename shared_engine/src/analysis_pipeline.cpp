@@ -160,6 +160,71 @@ bool AnalysisPipeline::processPoint(const FusedPoint& point) {
     return false;
 }
 
+bool AnalysisPipeline::finalize() {
+    if (impl_->state != PipeState::IN_CORNER) return false;
+
+    // Flush the pending corner — same result production logic as CORNER_DONE
+    auto segs = impl_->corner_detector.getSegments();
+    int seg_idx = static_cast<int>(segs.size()) - 1;
+    if (seg_idx >= 0 && seg_idx < static_cast<int>(segs.size())) {
+        const auto& seg = segs[seg_idx];
+
+        PipelineResult r{};
+        std::snprintf(r.segment_id, sizeof(r.segment_id), "%s",
+            seg.segment_id ? seg.segment_id : "");
+
+        r.entry_speed_kmh = impl_->corner_entry_speed;
+        r.min_speed_kmh = impl_->corner_min_speed;
+        r.exit_speed_kmh = impl_->corner_exit_speed;
+        r.max_lat_g = impl_->corner_max_lat_g;
+
+        // Speed deltas (NaN-safe)
+        r.entry_delta_kmh = std::isnan(seg.reference_entry_speed_kmh) ? 0.0
+            : r.entry_speed_kmh - seg.reference_entry_speed_kmh;
+        r.min_delta_kmh = std::isnan(seg.reference_speed_kmh) ? 0.0
+            : r.min_speed_kmh - seg.reference_speed_kmh;
+        r.exit_delta_kmh = std::isnan(seg.reference_exit_speed_kmh) ? 0.0
+            : r.exit_speed_kmh - seg.reference_exit_speed_kmh;
+        r.lat_g_delta = std::isnan(seg.reference_lateral_g) ? 0.0
+            : r.max_lat_g - seg.reference_lateral_g;
+
+        // Root cause
+        auto rc = impl_->root_cause.analyze(
+            0.0,
+            r.entry_delta_kmh,
+            r.min_delta_kmh,
+            r.exit_delta_kmh,
+            seg.reference_lateral_g > 0 ? r.max_lat_g / seg.reference_lateral_g : 1.0,
+            0.5,   // TODO: trail_brake
+            0.3);  // TODO: line_deviation
+
+        std::snprintf(r.root_cause, sizeof(r.root_cause), "%s",
+            rc.root_cause ? rc.root_cause : "");
+        std::snprintf(r.root_cause_label, sizeof(r.root_cause_label), "%s",
+            rc.root_cause_label ? rc.root_cause_label : "");
+        std::snprintf(r.confidence, sizeof(r.confidence), "%s",
+            rc.confidence ? rc.confidence : "");
+        r.time_loss_ms = rc.time_loss_ms;
+
+        // Coach message
+        auto msg = impl_->coach.generate(
+            r.segment_id, r.root_cause,
+            std::max(std::abs(r.entry_delta_kmh),
+                std::max(std::abs(r.min_delta_kmh), std::abs(r.exit_delta_kmh))),
+            2);
+        std::snprintf(r.coach_message, sizeof(r.coach_message), "%s",
+            msg.text ? msg.text : "");
+        r.coach_priority = msg.priority;
+        r.coach_tier = msg.tier;
+
+        impl_->results.push_back(r);
+        impl_->has_pending = true;
+    }
+
+    impl_->state = PipeState::STRAIGHT;
+    return true;
+}
+
 int AnalysisPipeline::getResultCount() const {
     return static_cast<int>(impl_->results.size());
 }

@@ -229,6 +229,10 @@ int c_pipeline_get_result(void* h, int idx, CPipelineResult* out) {
 void c_pipeline_reset(void* h) {
     if(!h)return; auto o=reinterpret_cast<codriver::AnalysisPipeline*>(h); o->reset();
 }
+int c_pipeline_finalize(void* h) {
+    if(!h)return 0; auto o=reinterpret_cast<codriver::AnalysisPipeline*>(h);
+    return o->finalize()?1:0;
+}
 
 // ============================================================
 // Best Lap Finder (Phase 2.5)
@@ -250,6 +254,13 @@ int c_best_lap_get_best(void* h, CBestLapResult* out) {
 int c_best_lap_count(void* h) {
     if(!h)return 0; auto o=reinterpret_cast<codriver::BestLapFinder*>(h);
     return o->getLapCount();
+}
+int c_best_lap_get_lap(void* h, int idx, CLapRecord* out) {
+    if(!h||!out||idx<0)return -1; auto o=reinterpret_cast<codriver::BestLapFinder*>(h);
+    auto r=o->getLap(idx); if(!r)return -1;
+    out->lap_number=r->lap_number; out->lap_time_ms=r->lap_time_ms;
+    out->lap_distance_m=r->lap_distance_m; out->avg_speed_kmh=r->avg_speed_kmh;
+    return 0;
 }
 int c_best_lap_record_sector(void* h, int sidx, int64_t t) {
     if(!h)return 0; auto o=reinterpret_cast<codriver::BestLapFinder*>(h);
