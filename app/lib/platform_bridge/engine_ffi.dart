@@ -3,7 +3,7 @@ import 'dart:io';
 import 'package:ffi/ffi.dart';
 
 // ============================================================
-// C-side Structs (match c_api.h definitions)
+// C-side Structs (match c_api.h definitions) — 55/55 fields
 // ============================================================
 
 final class CFusedPoint extends Struct {
@@ -125,7 +125,7 @@ final class CSessionStats extends Struct {
 }
 
 // ============================================================
-// EngineFFI — complete C API bindings (48/48)
+// EngineFFI — complete C API bindings (55/55)
 // ============================================================
 
 class EngineFFI {
@@ -331,7 +331,9 @@ class EngineFFI {
       lib.lookupFunction<Void Function(Pointer<Void>), void Function(Pointer<Void>)>('c_best_lap_reset')(h);
 
   // ============================================================
-  // Session Stats — Phase 2.8 (5/5)
+  // ============================================================
+  // Session Stats (7/7 complete)
+  // ============================================================ — Phase 2.8 (5/5)
   // ============================================================
   static Pointer<Void> sessionStatsCreate() =>
       lib.lookupFunction<Pointer<Void> Function(), Pointer<Void> Function()>('c_session_stats_create')();

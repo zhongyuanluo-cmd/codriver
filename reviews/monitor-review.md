@@ -2282,3 +2282,107 @@ R-016 P0-2 (测试增强) ──────────→ 独立，不依赖 R
 2. **R-015 P0-1** (CSessionStats 重构) — 架构修正
 3. **R-015 P1-1** (复用 BestLapFinder) — 与 P0-1 一起做
 4. **R-015 P1-2** (FFI 计数器) + **R-016 P1-5** (SessionStats 测试)
+
+---
+
+## R-015/R-016 第一轮验证 (fix/R-015-016 @ 6399a21)
+
+- **验证日期**: 2026-06-03
+- **验证人**: Monitor (GLM)
+- **修复分支**: `fix/R-015-016` @ `6399a21`
+- **基准分支**: `feat/phase-2.8-session-stats` @ `2d55e16`
+- **变更文件**: 5 files, +490/-11 lines
+
+---
+
+### R-015 验证结果
+
+#### P0-1: CSessionStats 与 CBestLapResult 重叠 — ✅ 已修复
+
+**验证方式**: 逐文件比对 diff
+
+| 文件 | 修改内容 | 验证 |
+|:---:|------|:---:|
+| `c_api.h` | `CSessionStats` 改为 `typedef struct { CBestLapResult best; double avg_speed, consistency; }` | ✅ |
+| `c_api.cpp` | `c_session_stats_compute()` 使用 `out->best.total_laps` 等内嵌路径 | ✅ |
+| `engine_ffi.dart` | `CSessionStats` 改为 `external CBestLapResult best;` + 2 个 Double | ✅ |
+
+内存布局正确：CBestLapResult 内嵌后，Dart FFI Struct 嵌套等价于 C struct 内嵌，访问路径 `stats.best.bestLap` 合理。
+
+#### P1-1: SessionStatsCalc 复用 BestLapFinder — ❌ 未修复
+
+`session_stats.h` 和 `session_stats.cpp` 无任何修改。SessionStatsCalc 仍独立维护 `recordLap()` / `recordSector()`，与 BestLapFinder 数据双写问题未解决。
+
+**状态**: 📋需第二轮修复
+
+#### P1-2: FFI 计数器未更新 — ❌ 未修复
+
+- `engine_ffi.dart` 第 128 行仍为 `EngineFFI — complete C API bindings (48/48)`，应为 `(55/55)`
+- 第 334 行 Phase 2.8 注释仍为 `(5/5)`，实际有 7 个绑定（create/destroy/recordLap/recordSector/compute/count/reset）
+
+**状态**: 📋需第二轮修复
+
+#### P1-3: 字段命名不对齐 — 📋推迟（符合预期）
+
+#### P2-1: compute 缓存 — 📋推迟（符合预期）
+
+---
+
+### R-016 验证结果
+
+#### P0-2: 测试深度不足 — ⚠️ 部分修复
+
+逐测试验证：
+
+| Test | 增强内容 | 有 assert? | 评价 |
+|:----:|------|:----:|------|
+| Test 17 (KalmanFilter) | +predict(0.1) +updateGPS(...) +assert(out.speed>0) | ✅ | **通过** — 核心功能验证到位 |
+| Test 18 (CornerDetector) | +10 points +get_segment_count | ❌ | **不通过** — 无 `get_segment()` 调用，无 `cnt > 0` 断言，仍只验证"不崩溃" |
+| Test 19 (LapTimer) | +远离→回到起跑线过程 | ❌ | **不通过** — 无 `assert(lapCount() >= 1)` 或 `assert(lap_ms > 0)`，如果过线逻辑有 bug 测试仍 PASS |
+| Test 20 (CoordTransform) | +assert(clg≈0.5) +detectDrift(90,120) assert(drift==1) | ✅ | **通过** — 逻辑正确性有验证 |
+
+**关键问题**: Test 18 和 Test 19 缺少关键 assert。P0-2 审查意见的核心是"测试只验证不崩溃而非逻辑正确"，这两者仍未解决。
+
+**⚠️ Worker 注意**:
+1. **Test 18**: 如果 CornerDetector 需要 ≥20 个点才能检测到弯道，增加到足够数量；如果 `get_segment_count() > 0`，必须调用 `get_segment()` 验证结果可达
+2. **Test 19**: 如果不确定 LapTimer 过线坐标精确度，可用以下策略：
+   - 方案 A：找到 LapTimer 源码中的过线阈值，构造精确穿越点，断言 `lapCount() >= 1`
+   - 方案 B：如果过线确实需要更复杂的路径，至少断言 `lapCount() >= 0` + 打印 `lap_ms` 值，**并在注释中说明为何不 assert >0**
+   - 方案 C：添加 20~30 个点模拟完整一圈路径，确保穿越起跑线
+
+#### P1-5: SessionStats 测试不充分 — ❌ 未修复
+
+无新增测试覆盖：
+- ❌ `recordSector` → `optimal_time` 路径
+- ❌ 单圈 `consistency_score == 0` 边界
+- ❌ `reset()` 功能
+
+**状态**: 📋需第二轮修复
+
+#### P1-6: LapTimer 断言不足 — ❌ 未修复
+
+Test 19 无 `lapCount() > 0` 或 `lap_ms > 0` 断言，与 P0-2 问题重叠。
+
+#### P2-2: null handle 测试 — 📋推迟（符合预期）
+
+---
+
+### 验证汇总
+
+| 审查 | P0 必须 | P1 建议 | P2 推迟 |
+|:----:|:---:|:---:|:---:|
+| R-015 | ✅ 1/1 | ❌ 0/2 | — 2/2 推迟 |
+| R-016 | ⚠️ 2/4 | ❌ 0/2 | — 1/1 推迟 |
+
+**合入判定**: ⚠️ 不可合入 — P0-2 (Test 18/19) 和 P1-1/P1-2 尚未修复
+
+### 第二轮修复清单 (fix/R-015-016 round 2)
+
+| 优先级 | # | 描述 | 修复要求 |
+|:---:|:---:|------|------|
+| ⚡ | P0-2 续 | Test 18 CornerDetector 缺 assert | 添加 `assert(final_cnt >= 0)` + 若 `cnt>0` 则调用 `get_segment()` |
+| ⚡ | P0-2 续 | Test 19 LapTimer 缺 assert | 添加 `assert(lapCount() >= 1)` 或 `assert(lap_ms > 0)`；若过线困难则用方案 B 加注释说明 |
+| 📋 | P1-1 | SessionStatsCalc 复用 BestLapFinder | 修改 `session_stats.h/.cpp`，`compute()` 接受 `BestLapFinder` 引用而非独立记录 |
+| 📋 | P1-2 | FFI 计数器更新 | `48/48` → `55/55`，`5/5` → `7/7` |
+| 📋 | P1-5 | SessionStats 测试补充 | 添加 optimal_time / consistency 边界 / reset 测试 |
+| 📋 | P1-6 | LapTimer 断言 | 与 P0-2 Test 19 修复合并 |

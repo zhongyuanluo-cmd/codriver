@@ -1,6 +1,7 @@
 #ifndef CODRIVER_SESSION_STATS_H
 #define CODRIVER_SESSION_STATS_H
 
+#include "codriver/best_lap_finder.h"
 #include <cstdint>
 
 namespace codriver {
@@ -31,8 +32,11 @@ public:
     // Record a sector time for optimal lap calculation
     void recordSector(int sector_index, int64_t sector_time_ms);
 
-    // Compute session statistics
+    // Compute session statistics from recorded laps
     SessionStats compute() const;
+
+    // Compute session statistics from BestLapFinder data (P1-1: reuse existing data)
+    SessionStats compute(const BestLapFinder& blf) const;
 
     // Reset for new session
     void reset();
