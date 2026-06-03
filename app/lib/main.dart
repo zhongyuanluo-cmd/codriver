@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'ui/screens/analysis_screen.dart';
 
 void main() {
   runApp(
@@ -38,11 +39,11 @@ class MainShell extends StatefulWidget {
 class _MainShellState extends State<MainShell> {
   int _selectedIndex = 0;
 
-  static const _pages = <Widget>[
-    HomeScreen(),
-    TrackScreen(),
+  static final _pages = <Widget>[
+    const HomeScreen(),
+    const TrackScreen(),
     AnalysisScreen(),
-    SettingsScreen(),
+    const SettingsScreen(),
   ];
 
   @override
@@ -80,14 +81,6 @@ class TrackScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(appBar: AppBar(title: const Text('Track')), body: const Center(child: Text('Track Database')));
-  }
-}
-
-class AnalysisScreen extends StatelessWidget {
-  const AnalysisScreen({super.key});
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(appBar: AppBar(title: const Text('Analysis')), body: const Center(child: Text('Session Analysis')));
   }
 }
 
