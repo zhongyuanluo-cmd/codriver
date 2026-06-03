@@ -72,6 +72,7 @@ public:
     CornerDetector* cornerDetector();
     RootCauseEngine* rootCause();
     CoachTemplate* coachTemplate();
+    BrakeDetector* brakeDetector();
 
 private:
     class Impl;

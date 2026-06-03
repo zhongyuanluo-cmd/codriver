@@ -2,6 +2,7 @@
 #include "codriver/corner_detector.h"
 #include "codriver/root_cause.h"
 #include "codriver/coach_template.h"
+#include "codriver/brake_detector.h"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -21,6 +22,7 @@ public:
     CornerDetector corner_detector;
     RootCauseEngine root_cause;
     CoachTemplate coach;
+    BrakeDetector brake_detector;
 
     std::vector<PipelineResult> results;
 
@@ -37,6 +39,22 @@ public:
     // Pending result (set on CORNER_DONE, consumed by caller)
     PipelineResult pending_result;
     bool has_pending = false;
+
+    // Find the BrakeEvent whose release point is closest to the corner entry distance.
+    // Returns nullptr if no suitable event found.
+    const BrakeEvent* findBrakeForCorner(double corner_entry_dist) const {
+        const BrakeEvent* best = nullptr;
+        double best_diff = 200.0;  // max 200m proximity threshold
+        for (int i = 0; i < brake_detector.getEventCount(); ++i) {
+            const BrakeEvent* ev = brake_detector.getEvent(i);
+            double diff = std::abs(ev->release_distance_m - corner_entry_dist);
+            if (diff < best_diff) {
+                best_diff = diff;
+                best = ev;
+            }
+        }
+        return best;
+    }
 };
 
 AnalysisPipeline::AnalysisPipeline() : impl_(new Impl()) {}
@@ -48,6 +66,9 @@ bool AnalysisPipeline::processPoint(const FusedPoint& point) {
     impl_->corner_detector.processPoint(
         point.track_distance_m, point.latitude, point.longitude, point.speed_kmh);
     int new_count = impl_->corner_detector.getSegmentCount();
+
+    // Feed to brake detector (always, regardless of pipeline state)
+    impl_->brake_detector.processPoint(point);
 
     switch (impl_->state) {
     case PipeState::STRAIGHT:
@@ -71,16 +92,13 @@ bool AnalysisPipeline::processPoint(const FusedPoint& point) {
         }
         impl_->corner_exit_speed = point.speed_kmh;
 
-        // Corner completion: new segment detected (next corner) or
-        // lat_g drops below threshold after being in corner
+        // Corner completion: new segment detected (next corner) means
+        // the previous corner is finalized. The current point is the
+        // FIRST point of the new corner, so exit_speed was already
+        // captured from the last IN_CORNER iteration above.
         if (new_count > prev_count) {
-            // New corner starting → previous corner is complete
             impl_->state = PipeState::CORNER_DONE;
         }
-        // Note: In production, also use lat_g threshold fallback:
-        // else if (std::abs(point.lat_g) < 0.15 && impl_->corner_max_lat_g > 0.3) {
-        //     impl_->state = PipeState::CORNER_DONE;
-        // }
         break;
 
     case PipeState::CORNER_DONE:
@@ -114,16 +132,41 @@ bool AnalysisPipeline::processPoint(const FusedPoint& point) {
             r.lat_g_delta = std::isnan(seg.reference_lateral_g) ? 0.0
                 : r.max_lat_g - seg.reference_lateral_g;
 
-            // Root cause (P1-2: TODO — trail_brake and line_deviation are placeholders;
-            // will be replaced with real BrakeDetector data in Phase 2.6)
+            // Root cause — use real brake data from BrakeDetector when available
+            const BrakeEvent* brake_ev = impl_->findBrakeForCorner(seg.entry_distance_m);
+            double brake_delta = 0.0;
+            double trail_brake = 0.0;
+            double line_deviation = 0.3;  // default moderate line deviation
+            if (brake_ev) {
+                // brake_delta: speed drop from brake start to release
+                brake_delta = brake_ev->speed_drop_kmh;
+                // trail_brake: fraction of total braking that was trail braking
+                // (trail_brake_duration / total braking_duration, clamped 0..1)
+                if (brake_ev->braking_duration_ms > 0) {
+                    trail_brake = std::min(1.0,
+                        brake_ev->trail_brake_duration_ms / brake_ev->braking_duration_ms);
+                }
+                // line_deviation: estimate from brake release distance vs corner entry
+                // If release is well before entry, driver is on a good line; if very
+                // close or past entry, they may be off-line. Simple heuristic.
+                double dist_to_entry = seg.entry_distance_m - brake_ev->release_distance_m;
+                line_deviation = (dist_to_entry > 20.0) ? 0.1 :   // clean approach
+                                 (dist_to_entry > 5.0)  ? 0.3 :   // moderate
+                                 (dist_to_entry > 0.0)  ? 0.5 :   // late release
+                                                           0.7;    // past entry — poor line
+                // Fill brake fields in result
+                r.brake_distance_m = brake_ev->brake_distance_m;
+                r.brake_peak_decel_g = std::abs(brake_ev->peak_decel_g);
+                r.brake_speed_drop_kmh = brake_ev->speed_drop_kmh;
+            }
             auto rc = impl_->root_cause.analyze(
-                0.0,
+                brake_delta,
                 r.entry_delta_kmh,
                 r.min_delta_kmh,
                 r.exit_delta_kmh,
                 seg.reference_lateral_g > 0 ? r.max_lat_g / seg.reference_lateral_g : 1.0,
-                0.5,   // TODO: trail_brake — integrate BrakeDetector
-                0.3);  // TODO: line_deviation — implement line scoring
+                trail_brake,
+                line_deviation);
 
             std::snprintf(r.root_cause, sizeof(r.root_cause), "%s",
                 rc.root_cause ? rc.root_cause : "");
@@ -188,15 +231,34 @@ bool AnalysisPipeline::finalize() {
         r.lat_g_delta = std::isnan(seg.reference_lateral_g) ? 0.0
             : r.max_lat_g - seg.reference_lateral_g;
 
-        // Root cause
+        // Root cause — use real brake data from BrakeDetector when available
+        const BrakeEvent* brake_ev = impl_->findBrakeForCorner(seg.entry_distance_m);
+        double brake_delta_f = 0.0;
+        double trail_brake_f = 0.0;
+        double line_deviation_f = 0.3;  // default moderate line deviation
+        if (brake_ev) {
+            brake_delta_f = brake_ev->speed_drop_kmh;
+            if (brake_ev->braking_duration_ms > 0) {
+                trail_brake_f = std::min(1.0,
+                    brake_ev->trail_brake_duration_ms / brake_ev->braking_duration_ms);
+            }
+            double dist_to_entry = seg.entry_distance_m - brake_ev->release_distance_m;
+            line_deviation_f = (dist_to_entry > 20.0) ? 0.1 :
+                               (dist_to_entry > 5.0)  ? 0.3 :
+                               (dist_to_entry > 0.0)  ? 0.5 :
+                                                           0.7;
+            r.brake_distance_m = brake_ev->brake_distance_m;
+            r.brake_peak_decel_g = std::abs(brake_ev->peak_decel_g);
+            r.brake_speed_drop_kmh = brake_ev->speed_drop_kmh;
+        }
         auto rc = impl_->root_cause.analyze(
-            0.0,
+            brake_delta_f,
             r.entry_delta_kmh,
             r.min_delta_kmh,
             r.exit_delta_kmh,
             seg.reference_lateral_g > 0 ? r.max_lat_g / seg.reference_lateral_g : 1.0,
-            0.5,   // TODO: trail_brake
-            0.3);  // TODO: line_deviation
+            trail_brake_f,
+            line_deviation_f);
 
         std::snprintf(r.root_cause, sizeof(r.root_cause), "%s",
             rc.root_cause ? rc.root_cause : "");
@@ -236,15 +298,20 @@ const PipelineResult* AnalysisPipeline::getResult(int index) const {
 
 void AnalysisPipeline::reset() {
     impl_->corner_detector.reset();
+    impl_->brake_detector.reset();
     impl_->results.clear();
     impl_->state = PipeState::STRAIGHT;
+    impl_->corner_entry_speed = 0;
     impl_->corner_min_speed = 999.0;
+    impl_->corner_exit_speed = 0;
     impl_->corner_max_lat_g = 0;
+    impl_->corner_start_dist = 0;
     impl_->has_pending = false;
 }
 
 CornerDetector* AnalysisPipeline::cornerDetector() { return &impl_->corner_detector; }
 RootCauseEngine* AnalysisPipeline::rootCause() { return &impl_->root_cause; }
 CoachTemplate* AnalysisPipeline::coachTemplate() { return &impl_->coach; }
+BrakeDetector* AnalysisPipeline::brakeDetector() { return &impl_->brake_detector; }
 
 } // namespace codriver

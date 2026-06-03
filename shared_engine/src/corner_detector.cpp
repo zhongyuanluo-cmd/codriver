@@ -6,6 +6,20 @@
 
 namespace codriver {
 
+// --- Haversine distance between two WGS84 points (meters) ---
+// Accurate at all latitudes; replaces naive lat/lon Euclidean distance.
+static double haversineMeters(double lat1, double lon1, double lat2, double lon2) {
+    constexpr double kEarthRadiusM = 6371000.0;
+    constexpr double kDeg2Rad = 3.14159265358979323846 / 180.0;
+    double dlat = (lat2 - lat1) * kDeg2Rad;
+    double dlon = (lon2 - lon1) * kDeg2Rad;
+    double a = std::sin(dlat * 0.5) * std::sin(dlat * 0.5) +
+               std::cos(lat1 * kDeg2Rad) * std::cos(lat2 * kDeg2Rad) *
+               std::sin(dlon * 0.5) * std::sin(dlon * 0.5);
+    double c = 2.0 * std::atan2(std::sqrt(a), std::sqrt(1.0 - a));
+    return kEarthRadiusM * c;
+}
+
 enum class CornerState { STRAIGHT, ENTERING, IN_CORNER, EXITING };
 
 struct CornerData {
@@ -100,11 +114,11 @@ void CornerDetector::processPoint(double dist, double lat, double lon, double sp
 
             // Estimate radius from curvature: R ≈ 1/κ_max
             seg.radius_m = (cd.max_curv > 0.001) ? (1.0/cd.max_curv) : 100.0;
-            // Estimate angle from entry→exit distance and radius
-            double entry_exit_dist = std::sqrt(
-                (seg.exit_lat-seg.entry_lat)*(seg.exit_lat-seg.entry_lat) +
-                (seg.exit_lon-seg.entry_lon)*(seg.exit_lon-seg.entry_lon));
-            seg.angle_deg = (seg.radius_m > 1) ? (entry_exit_dist/seg.radius_m*180.0/3.14159) : 90.0;
+            // Estimate angle from entry→exit Haversine distance and radius
+            // Uses Haversine for accurate arc-length estimation at all latitudes
+            double entry_exit_dist = haversineMeters(
+                seg.entry_lat, seg.entry_lon, seg.exit_lat, seg.exit_lon);
+            seg.angle_deg = (seg.radius_m > 1) ? (entry_exit_dist/seg.radius_m*180.0/3.14159265358979) : 90.0;
             if (seg.angle_deg > 180) seg.angle_deg = 180;
 
             // Reference data: NaN (auto-detected, no reference yet)
