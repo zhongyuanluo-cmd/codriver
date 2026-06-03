@@ -119,12 +119,7 @@ final class CLapRecord extends Struct {
 }
 
 final class CSessionStats extends Struct {
-  @Int32()  external int totalLaps;
-  @Int32()  external int bestLap;
-  @Int64()  external int bestTime;
-  @Int64()  external int totalTime;
-  @Int64()  external int optimalTime;
-  @Int32()  external int hasOpt;
+  external CBestLapResult best;
   @Double() external double avgSpeed;
   @Double() external double consistency;
 }

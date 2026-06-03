@@ -137,8 +137,8 @@ int c_best_lap_record_sector(void* handle, int sector_index, int64_t sector_time
 void c_best_lap_reset(void* handle);
 
 // --- Session Stats (Phase 2.8) ---
-typedef struct { int total_laps, best_lap; int64_t best_time, total_time, optimal_time;
-    int has_opt; double avg_speed, consistency; } CSessionStats;
+// Embed CBestLapResult to avoid field duplication with BestLapFinder
+typedef struct { CBestLapResult best; double avg_speed, consistency; } CSessionStats;
 void* c_session_stats_create();
 void c_session_stats_destroy(void* handle);
 void c_session_stats_record_lap(void* handle, int64_t lap_time_ms, double lap_dist_m);

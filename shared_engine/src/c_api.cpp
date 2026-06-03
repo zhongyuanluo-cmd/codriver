@@ -285,9 +285,9 @@ void c_session_stats_record_sector(void* h, int sidx, int64_t t) {
 int c_session_stats_compute(void* h, CSessionStats* out) {
     if(!h||!out)return -1; auto o=reinterpret_cast<codriver::SessionStatsCalc*>(h);
     auto s=o->compute();
-    out->total_laps=s.total_laps; out->best_lap=s.best_lap_number;
-    out->best_time=s.best_lap_time_ms; out->total_time=s.total_time_ms;
-    out->optimal_time=s.optimal_lap_time_ms; out->has_opt=s.has_optimal?1:0;
+    out->best.total_laps=s.total_laps; out->best.best_lap=s.best_lap_number;
+    out->best.best_time=s.best_lap_time_ms; out->best.total_time=s.total_time_ms;
+    out->best.optimal_time=s.optimal_lap_time_ms; out->best.has_opt=s.has_optimal?1:0;
     out->avg_speed=s.avg_speed_kmh; out->consistency=s.consistency_score;
     return 0;
 }

@@ -1865,3 +1865,420 @@ fix/R-013-014 (20a74b6)
         ├── backend/app/models/schemas.py              (+6 lines)
         └── reviews/monitor-review.md                  (+618 lines)
 ```
+
+---
+
+## R-015: Phase 2.8 SessionStats 审查
+
+- **审查日期**: 2026-06-03
+- **审查人**: Monitor (GLM)
+- **审查分支**: `feat/phase-2.8-session-stats` @ `2d55e16`
+- **审查对象**:
+  - `shared_engine/include/codriver/session_stats.h`
+  - `shared_engine/src/session_stats.cpp`
+  - `shared_engine/include/codriver/c_api.h` (CSessionStats 部分)
+  - `shared_engine/src/c_api.cpp` (session_stats 部分)
+  - `app/lib/platform_bridge/engine_ffi.dart` (CSessionStats + 7 个绑定)
+  - `shared_engine/CMakeLists.txt` (+session_stats.cpp)
+  - `shared_engine/tests/test_main.cpp` (Test 15~16)
+- **审查范围**: SessionStats 计算逻辑、C API 桥接、FFI 绑定、与 BestLapFinder 的关系
+- **审查结论**: ⚠️ 修改后通过
+
+---
+
+### 总体评价
+
+SessionStatsCalc 实现了 session 级别的统计摘要（圈数、最快圈、平均速度、一致性评分、最优圈），C API/FFI 桥接完整，Pimpl 模式使用正确。但存在 **架构设计问题**：SessionStatsCalc 与 BestLapFinder 大量数据/逻辑重复，CSessionStats 与 CBestLapResult 字段高度重叠。测试覆盖了正常路径和空 session，但缺少 optimal/consistency/reset 的验证。
+
+### 问题清单
+
+#### P0-1: `CSessionStats` 与 `CBestLapResult` 功能重叠 — 架构设计问题
+
+**严重度**: ⚡本次合入前必须修复
+**文件**: `c_api.h`
+
+`CSessionStats` 的 6 个字段与 `CBestLapResult` 完全重叠：
+
+| 字段 | CBestLapResult | CSessionStats |
+|------|:---:|:---:|
+| total_laps | ✅ | ✅ (同名) |
+| best_lap | ✅ (`best_lap`) | ✅ (`best_lap`) |
+| best_time | ✅ (`best_time`) | ✅ (`best_time`) |
+| total_time | ✅ (`total_time`) | ✅ (`total_time`) |
+| optimal_time | ✅ (`optimal_time`) | ✅ (`optimal_time`) |
+| has_opt | ✅ (`has_opt`) | ✅ (`has_opt`) |
+
+`CSessionStats` 仅额外多了 `avg_speed` + `consistency` 两个字段。
+
+**问题本质**: 后端有两个独立的 C struct 承载几乎相同的数据，意味着：
+1. 数据双写：Flutter 端必须同时调用 `c_best_lap_get_best()` 和 `c_session_stats_compute()` 获取重叠数据
+2. 一致性风险：如果 BestLapFinder 和 SessionStatsCalc 的圈数据不同步，两份 best_lap 可能不一致
+
+**推荐方案**: `CSessionStats` 应该 **包含** `CBestLapResult` 而非重复其字段，或者 SessionStatsCalc 内部直接使用 BestLapFinder 的输出：
+
+```c
+// 方案 A: CSessionStats 内嵌 CBestLapResult
+typedef struct {
+    CBestLapResult best;   // 复用，不重复
+    double avg_speed;
+    double consistency;
+} CSessionStats;
+
+// 方案 B: SessionStatsCalc 接收 BestLapFinder handle
+// c_session_stats_compute(handle, best_lap_handle, out)
+// 从 BestLapFinder 读取 lap 数据而非自己记录
+```
+
+**⚠️ Worker 防误判提示**: 不要认为"字段重叠 ≠ 需要修复"。重叠意味着 Flutter 端必须双写双读，且两处数据可能不一致。这是架构设计缺陷，应在此阶段修正，否则 Phase 3 对接时会产生混乱。
+
+#### P1-1: `SessionStatsCalc` 与 `BestLapFinder` 数据/逻辑重复
+
+**严重度**: 📋建议修复
+**文件**: `session_stats.h`, `session_stats.cpp`
+
+两者都有 `recordLap()` + `recordSector()`，各自独立维护圈数据。实际使用时 Worker 必须同时调用两处：
+
+```cpp
+// 当前：双重记录
+bestLap.recordLap(time, dist);
+stats.recordLap(time, dist);       // 重复！
+bestLap.recordSector(idx, time);
+stats.recordSector(idx, time);     // 重复！
+```
+
+**推荐**: SessionStatsCalc 应复用 BestLapFinder 的数据，而非独立收集：
+
+```cpp
+// 推荐：SessionStats 从 BestLapFinder 读取
+SessionStats compute(const BestLapFinder& blf) const;
+// 或 C API: c_session_stats_compute(stats_h, best_lap_h, out)
+```
+
+#### P1-2: FFI 注释计数器未更新
+
+**严重度**: 📋建议修复
+**文件**: `engine_ffi.dart`
+
+- 文件头部 `EngineFFI — complete C API bindings (48/48)` 应更新为 `(55/55)`（新增 7 个 SessionStats 绑定）
+- Phase 2.8 注释 `(5/5)` 应为 `(7/7)`（create/destroy/recordLap/recordSector/compute/count/reset）
+
+#### P1-3: `CSessionStats` 字段命名与 Backend Schema 不对齐
+
+**严重度**: 📋可推迟（Phase 3 对齐）
+**文件**: `c_api.h`, `schemas.py`
+
+| C API 字段 | Backend SessionSummary 字段 | 差异 |
+|:---:|:---:|------|
+| `avg_speed` | `avg_speed_kmh` | 缺单位后缀 |
+| `consistency` | `consistency_score` | 缺 `_score` 后缀 |
+| `best_lap` | `best_lap_number` | 缺 `_number` 后缀 |
+
+Phase 3 FFI→Backend 映射时需手动转换。建议现在标注 TODO。
+
+#### P2-1: `compute()` 无缓存
+
+**严重度**: 📋可推迟
+**文件**: `session_stats.cpp`
+
+每次 `compute()` 都遍历全部 laps + sectors。如果 UI 刷新频繁（如 1Hz），性能影响可忽略。Phase 3 可加 dirty flag 优化。
+
+### 修复优先级
+
+| # | 级别 | 描述 | 分类 |
+|:---:|:----:|------|:---:|
+| P0-1 | ⚡必须 | CSessionStats 与 CBestLapResult 重叠 | 架构 |
+| P1-1 | 📋建议 | SessionStatsCalc 复用 BestLapFinder | 架构 |
+| P1-2 | 📋建议 | FFI 计数器 48→55 | 文档 |
+| P1-3 | 📋推迟 | 字段命名对齐 TODO | 文档 |
+| P2-1 | 📋推迟 | compute 缓存 | 性能 |
+
+### Worker 修复指南 (R-015)
+
+**P0-1 修复方案**（推荐方案 A — CSessionStats 内嵌 CBestLapResult）：
+
+**c_api.h** 修改：
+```c
+// 删除重复字段，改为内嵌
+typedef struct {
+    CBestLapResult best;    // 复用已有 struct
+    double avg_speed;       // 新增
+    double consistency;     // 新增
+} CSessionStats;
+```
+
+**c_api.cpp** 修改：
+```cpp
+int c_session_stats_compute(void* h, CSessionStats* out) {
+    if(!h||!out)return -1;
+    auto o=reinterpret_cast<codriver::SessionStatsCalc*>(h);
+    auto s=o->compute();
+    // 填充 best 子结构
+    out->best.best_lap = s.best_lap_number;
+    out->best.total_laps = s.total_laps;
+    out->best.best_time = s.best_lap_time_ms;
+    out->best.total_time = s.total_time_ms;
+    out->best.optimal_time = s.optimal_lap_time_ms;
+    out->best.has_opt = s.has_optimal?1:0;
+    // 填充扩展字段
+    out->avg_speed = s.avg_speed_kmh;
+    out->consistency = s.consistency_score;
+    return 0;
+}
+```
+
+**engine_ffi.dart** 修改：
+```dart
+final class CSessionStats extends Struct {
+  external CBestLapResult best;   // 内嵌
+  @Double() external double avgSpeed;
+  @Double() external double consistency;
+}
+```
+
+**⚠️ Worker 防误判提示**:
+1. 不要认为"内嵌 struct 会改变内存布局所以不安全"—— C struct 内嵌是标准做法，内存布局等价于字段平铺
+2. 不要保留旧字段"以防万一"—— 重叠字段才是真正的不安全因素
+3. Flutter 端访问方式变为 `stats.best.bestLap` 而非 `stats.bestLap`，需同步更新
+
+---
+
+## R-016: Phase 2.9 测试覆盖 L-10 审查
+
+- **审查日期**: 2026-06-03
+- **审查人**: Monitor (GLM)
+- **审查分支**: `feat/phase-2.9-test-coverage` @ `b837716`
+- **审查对象**:
+  - `shared_engine/tests/test_main.cpp` (Test 15~20)
+- **审查范围**: L-10 遗留项（c_api/LapTimer/coord_transform 单元测试）覆盖度
+- **审查结论**: ⚠️ 修改后通过
+
+---
+
+### 总体评价
+
+Phase 2.9 新增了 6 个测试（Test 15~20），总测试数从 18→24。覆盖了 SessionStats 正常路径、空 session、c_api KalmanFilter/CornerDetector 基础生命周期、LapTimer 基础设置、c_api CoordTransform 标定+转换。但 **测试深度严重不足**——多个测试只验证了"不会崩溃"而非"逻辑正确"，LapTimer 从未触发实际过线检测，c_api 测试缺少核心功能验证。
+
+### 问题清单
+
+#### P0-2: 测试深度不足 — 多个测试只验证"不崩溃"
+
+**严重度**: ⚡本次合入前必须修复
+**文件**: `test_main.cpp`
+
+逐测试分析：
+
+**Test 17 (c_api KalmanFilter)**:
+```cpp
+void* kf = c_kalman_create();
+CFusedPoint out{};
+int rc = c_kalman_get_state(kf, &out);  // 只测了 getState
+c_kalman_destroy(kf);
+```
+❌ 未测：`predict()`、`updateGPS()`、`updateIMU()` — KalmanFilter 的核心功能完全未验证
+❌ 未测：predict+update 后 state 是否变化（如 speed 从 0→非 0）
+
+**Test 18 (c_api CornerDetector)**:
+```cpp
+void* cd = c_corner_detector_create();
+int cnt = c_corner_detector_get_segment_count(cd);  // 空的，=0
+int detected = c_corner_detector_process_point(cd, 0.0, 30.0, 120.0, 100.0);  // 1 个点
+c_corner_detector_destroy(cd);
+```
+❌ 未测：弯道检测（至少需要多个点形成减速→加速模式）
+❌ 未测：`get_segment()` 取结果
+
+**Test 19 (LapTimer)**:
+```cpp
+timer.setStartLine(30.0, 120.0, 30.001, 120.001);
+auto lap_ms = timer.processPoint(30.0005, 120.0005, 5000, &dist, &dir);
+assert(timer.lapCount() == 0);  // ← 唯一断言！
+lap_ms = timer.processPoint(30.0015, 120.0015, 10000, &dist, &dir);
+// ← 没有任何 assert！直接 printf PASS
+```
+❌ 核心功能未验证：`lapCount()` 仍为 0，从未触发过线
+❌ 需要：先远离起跑线 → 再穿越 → 断言 `lapCount() >= 1` 且 `lap_ms > 0`
+
+**Test 20 (c_api CoordTransform)**:
+```cpp
+int ok = c_coord_transform_calibrate(ct, 0.0, 0.0, -9.81);
+int rc = c_coord_transform_transform(ct, 4.905, 0.0, -9.81, &clg, &clat, &cv);
+```
+❌ 未测：`detectDrift()` — CoordTransform 的关键安全功能
+❌ 未测：transform 输出值是否合理（如 `clg` 应接近 0.5g）
+
+**推荐增强**：
+
+```cpp
+// Test 17 增强：KalmanFilter predict+update
+void* kf = c_kalman_create();
+c_kalman_predict(kf, 0.1);
+c_kalman_update_gps(kf, 30.0, 120.0, 10.0, 80.0, 90.0, 5.0);
+CFusedPoint out{};
+c_kalman_get_state(kf, &out);
+assert(out.speed > 0);  // 有 GPS 更新后速度应 > 0
+c_kalman_destroy(kf);
+
+// Test 19 增强：LapTimer 实际过线
+codriver::LapTimer timer;
+timer.setStartLine(30.0, 120.0, 30.001, 120.001);
+double dist; int dir;
+// 远离起跑线
+timer.processPoint(30.01, 120.01, 1000, &dist, &dir);
+timer.processPoint(30.02, 120.02, 2000, &dist, &dir);
+// ... 多个点模拟一圈 ...
+// 回到起跑线附近，触发过线
+timer.processPoint(30.0005, 120.0005, 70000, &dist, &dir);
+assert(timer.lapCount() >= 1);
+// 或至少验证 lapCount() > 0
+
+// Test 20 增强：detectDrift
+int drift = c_coord_transform_detect_drift(nullptr, 90.0, 120.0);  // 30° 差异
+assert(drift == 1);  // >15° 应检测到漂移
+```
+
+**⚠️ Worker 防误判提示**:
+1. 不要认为"函数不崩溃 = 测试通过" — 测试的目的是验证**逻辑正确性**，不是验证**不崩溃**
+2. 不要认为"LapTimer 过线测试太复杂" — 就算无法完美模拟一圈，至少应该验证 `lapCount() > 0` 的路径可达
+3. KalmanFilter 的 predict+update 是核心功能，不能只测 create/destroy
+
+#### P1-5: SessionStats 测试不充分
+
+**严重度**: 📋建议修复
+**文件**: `test_main.cpp` Test 15~16
+
+- Test 15 未测 `recordSector` → `optimal_time` 计算路径
+- Test 15 未测 `consistency_score` 的边界：1 圈应返回 0
+- 未测 `reset()` 功能
+- 建议补充：
+  ```cpp
+  // 1 圈：consistency 应为 0
+  stats.recordLap(120000, 4500.0);
+  auto s1 = stats.compute();
+  assert(s1.consistency_score == 0);  // 单圈无法衡量一致性
+
+  // optimal lap from sectors
+  stats.reset();
+  stats.recordLap(120000, 4500.0);
+  stats.recordSector(0, 30000);
+  stats.recordSector(1, 28000);
+  auto s2 = stats.compute();
+  assert(s2.has_optimal);
+  assert(s2.optimal_lap_time_ms == 58000);
+
+  // reset
+  stats.reset();
+  assert(stats.getLapCount() == 0);
+  ```
+
+#### P1-6: Test 19 LapTimer 断言不足
+
+**严重度**: 📋建议修复
+**文件**: `test_main.cpp` Test 19
+
+当前唯一的断言是 `assert(timer.lapCount() == 0)` — 这验证的是"没有检测到过线"，而非"能检测到过线"。测试应该验证正面路径。
+
+#### P2-2: null handle 测试缺失
+
+**严重度**: 📋可推迟
+**文件**: `test_main.cpp`
+
+C API 所有函数都有 `if(!h)return` guard，但没有测试验证这些 guard 是否正确工作。Phase 3 可补充。
+
+### 修复优先级
+
+| # | 级别 | 描述 | 分类 |
+|:---:|:----:|------|:---:|
+| P0-2 | ⚡必须 | 测试深度不足 — 4 个测试只验证"不崩溃" | 测试 |
+| P1-5 | 📋建议 | SessionStats 测试缺 optimal/reset/consistency 边界 | 测试 |
+| P1-6 | 📋建议 | LapTimer 测试断言不足 | 测试 |
+| P2-2 | 📋推迟 | null handle 测试 | 测试 |
+
+### Worker 修复指南 (R-016)
+
+**P0-2 修复方案**（增强 4 个测试）：
+
+**Test 17 (KalmanFilter)**: 添加 predict + updateGPS，验证 state 变化：
+```cpp
+void* kf = c_kalman_create();
+c_kalman_predict(kf, 0.1);
+c_kalman_update_gps(kf, 30.0, 120.0, 10.0, 80.0, 90.0, 5.0);
+CFusedPoint out{};
+int rc = c_kalman_get_state(kf, &out);
+assert(rc == 0);
+assert(out.speed > 0.0);  // GPS 更新后速度应 > 0
+c_kalman_destroy(kf);
+printf("PASS: c_api KalmanFilter: predict+update speed=%.1f\n", out.speed);
+```
+
+**Test 18 (CornerDetector)**: 添加多段弯道模拟 + get_segment 验证：
+```cpp
+void* cd = c_corner_detector_create();
+// 模拟一段弯道：直道→减速→弯心→加速→直道
+double dist = 0;
+double speeds[] = {120, 118, 110, 95, 80, 75, 78, 90, 105, 120};
+for (int i = 0; i < 10; i++) {
+    c_corner_detector_process_point(cd, dist, 30.0, 120.0, speeds[i]);
+    dist += 50;
+}
+int cnt = c_corner_detector_get_segment_count(cd);
+// 注意：CornerDetector 需要足够的数据点才能检测弯道
+// 如果 cnt > 0，验证 get_segment 可正常取值
+if (cnt > 0) {
+    CCornerInfo info{};
+    int rc = c_corner_detector_get_segment(cd, 0, &info);
+    assert(rc == 0);
+}
+c_corner_detector_destroy(cd);
+printf("PASS: c_api CornerDetector: segments=%d\n", cnt);
+```
+
+**Test 19 (LapTimer)**: 修复为验证实际过线检测：
+```cpp
+codriver::LapTimer timer;
+timer.setStartLine(30.0, 120.0, 30.001, 120.001);
+double dist; int dir;
+// 从起跑线出发
+timer.processPoint(30.0005, 120.0005, 0, &dist, &dir);
+// 远离起跑线（模拟一圈）
+for (int i = 1; i <= 10; i++) {
+    timer.processPoint(30.0 + i*0.01, 120.0 + i*0.01, i*5000, &dist, &dir);
+}
+// 回到起跑线附近（触发过线）
+int64_t lap_ms = timer.processPoint(30.0008, 120.0008, 60000, &dist, &dir);
+// 至少验证 lapCount 或 lap_ms 的预期行为
+printf("PASS: LapTimer: laps=%d lap_ms=%lld\n", timer.lapCount(), (long long)lap_ms);
+// 注意：如果 LapTimer 的过线逻辑需要精确坐标匹配，
+// 可能需要调整坐标以确保穿越起跑线
+```
+
+**Test 20 (CoordTransform)**: 添加 detectDrift + transform 输出值验证：
+```cpp
+// detectDrift: 30° 差异 > 15° 阈值
+int drift = c_coord_transform_detect_drift(nullptr, 90.0, 120.0);
+assert(drift == 1);  // >15° 应检测到漂移
+int no_drift = c_coord_transform_detect_drift(nullptr, 90.0, 92.0);
+assert(no_drift == 0);  // <15° 不应报告漂移
+
+// transform 输出值验证
+double clg=0, clat=0, cv=0;
+c_coord_transform_transform(ct, 4.905, 0.0, -9.81, &clg, &clat, &cv);
+assert(std::abs(clg - 0.5) < 0.1);  // 0.5g 加速度 ≈ long_g
+```
+
+**⚠️ Worker 防误判提示**:
+1. **Test 19 最关键** — 当前唯一的断言 `lapCount()==0` 等于在验证"功能不工作"，这比没有测试更危险（给读者错误的安全感）
+2. **不要只添加 printf 不加 assert** — 没有 assert 的测试只是日志，不是测试
+3. **CornerDetector 弯道检测可能需要更多数据点** — 如果 10 个点不够，增加到 20~30 个点；重要的是验证 `get_segment()` 路径可达
+
+### R-015/R-016 跨依赖
+
+```
+R-015 P0-1 (CSessionStats 重构) ──→ R-016 P1-5 (SessionStats 测试需同步更新)
+R-016 P0-2 (测试增强) ──────────→ 独立，不依赖 R-015
+```
+
+**推荐修复顺序**：
+1. **R-016 P0-2** (测试增强) — 优先，确保基础模块的测试深度
+2. **R-015 P0-1** (CSessionStats 重构) — 架构修正
+3. **R-015 P1-1** (复用 BestLapFinder) — 与 P0-1 一起做
+4. **R-015 P1-2** (FFI 计数器) + **R-016 P1-5** (SessionStats 测试)

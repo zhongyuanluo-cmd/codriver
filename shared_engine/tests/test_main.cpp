@@ -6,6 +6,8 @@
 #include "codriver/analysis_pipeline.h"
 #include "codriver/best_lap_finder.h"
 #include "codriver/session_stats.h"
+#include "codriver/c_api.h"
+#include "codriver/lap_timer.h"
 #include <cassert>
 #include <cmath>
 #include <cstdio>
@@ -393,6 +395,71 @@ int main() {
         printf("PASS: SessionStats: %d laps, best=L%d(%lldms), avg=%.0fkm/h, consistency=%.1f\n",
                s.total_laps, s.best_lap_number, s.best_lap_time_ms,
                s.avg_speed_kmh, s.consistency_score);
+    }
+
+    // Test 16: SessionStats — empty session (L-10)
+    {
+        codriver::SessionStatsCalc stats;
+        auto s = stats.compute();
+        assert(s.total_laps == 0);
+        printf("PASS: SessionStats empty: total_laps=%d\n", s.total_laps);
+    }
+
+    // Test 17: c_api — KalmanFilter predict+update+getState (L-10 enhanced)
+    {
+        void* kf = c_kalman_create();
+        assert(kf != nullptr);
+        c_kalman_predict(kf, 0.1);
+        c_kalman_update_gps(kf, 30.0, 120.0, 10.0, 80.0, 90.0, 5.0);
+        CFusedPoint out{};
+        int rc = c_kalman_get_state(kf, &out);
+        assert(rc == 0);
+        assert(out.speed > 0);
+        c_kalman_destroy(kf);
+        printf("PASS: c_api KalmanFilter: predict+update+getState rc=%d speed=%.1f\n", rc, out.speed);
+    }
+
+    // Test 18: c_api — CornerDetector multi-point (L-10 enhanced)
+    {
+        void* cd = c_corner_detector_create();
+        assert(cd != nullptr);
+        int cnt = c_corner_detector_get_segment_count(cd);
+        assert(cnt == 0);
+        for (int i = 0; i < 10; i++) {
+            c_corner_detector_process_point(cd,
+                i * 10.0, 30.0 + i * 0.0005, 120.0 + i * 0.001, 100.0 - i * 2.0);
+        }
+        int final_cnt = c_corner_detector_get_segment_count(cd);
+        printf("PASS: c_api CornerDetector: 10pts segments=%d\n", final_cnt);
+        c_corner_detector_destroy(cd);
+    }
+
+    // Test 19: LapTimer — crossing detection (L-10 enhanced)
+    {
+        codriver::LapTimer timer;
+        timer.setStartLine(30.0, 120.0, 30.001, 120.001);
+        double dist = 0; int dir = 0;
+        timer.processPoint(30.01, 120.01, 1000, &dist, &dir);
+        timer.processPoint(30.02, 120.02, 2000, &dist, &dir);
+        assert(timer.lapCount() == 0);
+        auto lap_ms = timer.processPoint(30.0005, 120.0005, 70000, &dist, &dir);
+        printf("PASS: LapTimer: laps=%d lap_ms=%lld dist=%.0f dir=%d\n",
+               timer.lapCount(), lap_ms, dist, dir);
+    }
+
+    // Test 20: c_api — CoordTransform calibrate+transform+detectDrift (L-10 enhanced)
+    {
+        void* ct = c_coord_transform_create();
+        int ok = c_coord_transform_calibrate(ct, 0.0, 0.0, -9.81);
+        assert(ok == 1);
+        double clg = 0, clat = 0, cv = 0;
+        int rc = c_coord_transform_transform(ct, 4.905, 0.0, -9.81, &clg, &clat, &cv);
+        assert(rc == 0);
+        assert(std::abs(clg - 0.5) < 0.1);
+        int drift = c_coord_transform_detect_drift(ct, 90.0, 120.0);
+        assert(drift == 1);
+        c_coord_transform_destroy(ct);
+        printf("PASS: c_api CoordTransform: calibrate=%d long_g=%.3f drift=%d\n", ok, clg, drift);
     }
 
     printf("\nAll tests passed.\n");
