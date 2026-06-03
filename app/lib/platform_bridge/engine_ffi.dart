@@ -44,8 +44,75 @@ final class CRootCause extends Struct {
   @Double()   external double loss;
 }
 
+final class CBrakeEvent extends Struct {
+  @Double() external double brakeLat;
+  @Double() external double brakeLon;
+  @Double() external double brakeDist;
+  @Double() external double brakeSpd;
+  @Double() external double peakG;
+  @Double() external double peakDist;
+  @Double() external double relLat;
+  @Double() external double relLon;
+  @Double() external double relDist;
+  @Double() external double relSpd;
+  @Double() external double durMs;
+  @Double() external double trailMs;
+  @Double() external double releaseMs;
+  @Double() external double speedDrop;
+  @Int64()  external int brakeTs;
+  @Int64()  external int releaseTs;
+  @Array(32) external Array<Uint8> segId;
+}
+
+final class CCornerSpeedDelta extends Struct {
+  @Double() external double entryKmh;
+  @Double() external double refEntry;
+  @Double() external double entryDelta;
+  @Double() external double minKmh;
+  @Double() external double refMin;
+  @Double() external double minDelta;
+  @Double() external double exitKmh;
+  @Double() external double refExit;
+  @Double() external double exitDelta;
+  @Double() external double latG;
+  @Double() external double refLatG;
+  @Double() external double latDelta;
+  @Array(32) external Array<Uint8> segId;
+}
+
+final class CPipelineResult extends Struct {
+  @Array(32)  external Array<Uint8> segId;
+  @Array(32)  external Array<Uint8> cause;
+  @Array(32)  external Array<Uint8> label;
+  @Array(16)  external Array<Uint8> conf;
+  @Array(256) external Array<Uint8> msg;
+  @Double() external double entrySpd;
+  @Double() external double minSpd;
+  @Double() external double exitSpd;
+  @Double() external double latG;
+  @Double() external double eDelta;
+  @Double() external double mDelta;
+  @Double() external double xDelta;
+  @Double() external double lDelta;
+  @Double() external double lossMs;
+  @Double() external double brakeDist;
+  @Double() external double brakePeak;
+  @Double() external double brakeDrop;
+  @Int32()  external int priority;
+  @Int32()  external int tier;
+}
+
+final class CBestLapResult extends Struct {
+  @Int32()  external int bestLap;
+  @Int32()  external int totalLaps;
+  @Int64()  external int bestTime;
+  @Int64()  external int totalTime;
+  @Int64()  external int optimalTime;
+  @Int32()  external int hasOpt;
+}
+
 // ============================================================
-// EngineFFI — complete C API bindings (29/29: Phase 1 23 + Phase 2 coord_transform 6)
+// EngineFFI — complete C API bindings (46/46)
 // ============================================================
 
 class EngineFFI {
@@ -168,4 +235,80 @@ class EngineFFI {
   static int coordTransformDetectDrift(Pointer<Void> h, double gpsHdg, double imuHdg) =>
       lib.lookupFunction<Int32 Function(Pointer<Void>, Double, Double),
           int Function(Pointer<Void>, double, double)>('c_coord_transform_detect_drift')(h, gpsHdg, imuHdg);
+
+  // ============================================================
+  // Brake Detector — Phase 2.2 (5/5)
+  // ============================================================
+  static Pointer<Void> brakeDetectorCreate() =>
+      lib.lookupFunction<Pointer<Void> Function(), Pointer<Void> Function()>('c_brake_detector_create')();
+  static void brakeDetectorDestroy(Pointer<Void> h) =>
+      lib.lookupFunction<Void Function(Pointer<Void>), void Function(Pointer<Void>)>('c_brake_detector_destroy')(h);
+  static int brakeDetectorProcessPoint(Pointer<Void> h, double lat, double lon,
+      double dist, double speed, double longG, int ts) =>
+      lib.lookupFunction<Int32 Function(Pointer<Void>, Double, Double, Double, Double, Double, Int64),
+          int Function(Pointer<Void>, double, double, double, double, double, int)>('c_brake_detector_process_point')(h, lat, lon, dist, speed, longG, ts);
+  static int brakeDetectorGetEventCount(Pointer<Void> h) =>
+      lib.lookupFunction<Int32 Function(Pointer<Void>), int Function(Pointer<Void>)>('c_brake_detector_get_event_count')(h);
+  static int brakeDetectorGetEvent(Pointer<Void> h, int idx, Pointer<CBrakeEvent> out) =>
+      lib.lookupFunction<Int32 Function(Pointer<Void>, Int32, Pointer<CBrakeEvent>),
+          int Function(Pointer<Void>, int, Pointer<CBrakeEvent>)>('c_brake_detector_get_event')(h, idx, out);
+  static void brakeDetectorReset(Pointer<Void> h) =>
+      lib.lookupFunction<Void Function(Pointer<Void>), void Function(Pointer<Void>)>('c_brake_detector_reset')(h);
+
+  // ============================================================
+  // Corner Speed Compare — Phase 2.3 (3/3)
+  // ============================================================
+  static Pointer<Void> cornerSpeedCreate() =>
+      lib.lookupFunction<Pointer<Void> Function(), Pointer<Void> Function()>('c_corner_speed_create')();
+  static void cornerSpeedDestroy(Pointer<Void> h) =>
+      lib.lookupFunction<Void Function(Pointer<Void>), void Function(Pointer<Void>)>('c_corner_speed_destroy')(h);
+  static int cornerSpeedCompare(Pointer<Void> h,
+      Pointer<Utf8> segId, double refEntry, double refMin, double refExit, double refLat,
+      double actEntry, double actMin, double actExit, double actLat,
+      Pointer<CCornerSpeedDelta> out) =>
+      lib.lookupFunction<Int32 Function(Pointer<Void>, Pointer<Utf8>, Double, Double, Double, Double,
+          Double, Double, Double, Double, Pointer<CCornerSpeedDelta>),
+          int Function(Pointer<Void>, Pointer<Utf8>, double, double, double, double,
+              double, double, double, double, Pointer<CCornerSpeedDelta>)>('c_corner_speed_compare')(
+          h, segId, refEntry, refMin, refExit, refLat, actEntry, actMin, actExit, actLat, out);
+
+  // ============================================================
+  // Analysis Pipeline — Phase 2.4 (4/4)
+  // ============================================================
+  static Pointer<Void> pipelineCreate() =>
+      lib.lookupFunction<Pointer<Void> Function(), Pointer<Void> Function()>('c_pipeline_create')();
+  static void pipelineDestroy(Pointer<Void> h) =>
+      lib.lookupFunction<Void Function(Pointer<Void>), void Function(Pointer<Void>)>('c_pipeline_destroy')(h);
+  static int pipelineProcessPoint(Pointer<Void> h, double lat, double lon, double dist,
+      double speed, double longG, double latG) =>
+      lib.lookupFunction<Int32 Function(Pointer<Void>, Double, Double, Double, Double, Double, Double),
+          int Function(Pointer<Void>, double, double, double, double, double, double)>('c_pipeline_process_point')(h, lat, lon, dist, speed, longG, latG);
+  static int pipelineGetResultCount(Pointer<Void> h) =>
+      lib.lookupFunction<Int32 Function(Pointer<Void>), int Function(Pointer<Void>)>('c_pipeline_get_result_count')(h);
+  static int pipelineGetResult(Pointer<Void> h, int idx, Pointer<CPipelineResult> out) =>
+      lib.lookupFunction<Int32 Function(Pointer<Void>, Int32, Pointer<CPipelineResult>),
+          int Function(Pointer<Void>, int, Pointer<CPipelineResult>)>('c_pipeline_get_result')(h, idx, out);
+  static void pipelineReset(Pointer<Void> h) =>
+      lib.lookupFunction<Void Function(Pointer<Void>), void Function(Pointer<Void>)>('c_pipeline_reset')(h);
+
+  // ============================================================
+  // Best Lap Finder — Phase 2.5 (5/5)
+  // ============================================================
+  static Pointer<Void> bestLapCreate() =>
+      lib.lookupFunction<Pointer<Void> Function(), Pointer<Void> Function()>('c_best_lap_create')();
+  static void bestLapDestroy(Pointer<Void> h) =>
+      lib.lookupFunction<Void Function(Pointer<Void>), void Function(Pointer<Void>)>('c_best_lap_destroy')(h);
+  static int bestLapRecord(Pointer<Void> h, int lapTimeMs, double lapDistM) =>
+      lib.lookupFunction<Int32 Function(Pointer<Void>, Int64, Double),
+          int Function(Pointer<Void>, int, double)>('c_best_lap_record')(h, lapTimeMs, lapDistM);
+  static int bestLapGetBest(Pointer<Void> h, Pointer<CBestLapResult> out) =>
+      lib.lookupFunction<Int32 Function(Pointer<Void>, Pointer<CBestLapResult>),
+          int Function(Pointer<Void>, Pointer<CBestLapResult>)>('c_best_lap_get_best')(h, out);
+  static int bestLapCount(Pointer<Void> h) =>
+      lib.lookupFunction<Int32 Function(Pointer<Void>), int Function(Pointer<Void>)>('c_best_lap_count')(h);
+  static int bestLapRecordSector(Pointer<Void> h, int sectorIdx, int sectorTimeMs) =>
+      lib.lookupFunction<Int32 Function(Pointer<Void>, Int32, Int64),
+          int Function(Pointer<Void>, int, int)>('c_best_lap_record_sector')(h, sectorIdx, sectorTimeMs);
+  static void bestLapReset(Pointer<Void> h) =>
+      lib.lookupFunction<Void Function(Pointer<Void>), void Function(Pointer<Void>)>('c_best_lap_reset')(h);
 }

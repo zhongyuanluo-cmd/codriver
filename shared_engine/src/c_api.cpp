@@ -5,6 +5,10 @@
 #include "codriver/coach_template.h"
 #include "codriver/lap_timer.h"
 #include "codriver/coord_transform.h"
+#include "codriver/brake_detector.h"
+#include "codriver/corner_speed_compare.h"
+#include "codriver/analysis_pipeline.h"
+#include "codriver/best_lap_finder.h"
 #include "codriver/types.h"
 #include <cstring>
 
@@ -120,6 +124,139 @@ int c_coord_transform_is_calibrated(void* h) {
 }
 int c_coord_transform_detect_drift(void* /*h*/, double gps_hdg, double imu_hdg) {
     return codriver::CoordTransform::detectDrift(gps_hdg, imu_hdg) ? 1 : 0;
+}
+
+// ============================================================
+// Brake Detector (Phase 2.2)
+// ============================================================
+void* c_brake_detector_create() { return new codriver::BrakeDetector(); }
+void c_brake_detector_destroy(void* h) { if(!h)return; auto o=reinterpret_cast<codriver::BrakeDetector*>(h); delete o; }
+int c_brake_detector_process_point(void* h, double lat, double lon, double dist,
+                                    double speed, double long_g, int64_t ts) {
+    if(!h)return 0; auto o=reinterpret_cast<codriver::BrakeDetector*>(h);
+    codriver::FusedPoint fp{};
+    fp.latitude=lat; fp.longitude=lon; fp.track_distance_m=dist;
+    fp.speed_kmh=speed; fp.long_g=long_g; fp.timestamp_ms=ts;
+    return o->processPoint(fp)?1:0;
+}
+int c_brake_detector_get_event_count(void* h) {
+    if(!h)return 0; auto o=reinterpret_cast<codriver::BrakeDetector*>(h);
+    return o->getEventCount();
+}
+int c_brake_detector_get_event(void* h, int idx, CBrakeEvent* out) {
+    if(!h||!out||idx<0)return -1; auto o=reinterpret_cast<codriver::BrakeDetector*>(h);
+    auto e=o->getEvent(idx); if(!e)return -1;
+    out->brake_lat=e->brake_lat; out->brake_lon=e->brake_lon;
+    out->brake_dist=e->brake_distance_m; out->brake_spd=e->brake_speed_kmh;
+    out->brake_ts=e->brake_timestamp_ms;
+    out->peak_g=e->peak_decel_g; out->peak_dist=e->peak_decel_distance_m;
+    out->rel_lat=e->release_lat; out->rel_lon=e->release_lon;
+    out->rel_dist=e->release_distance_m; out->rel_spd=e->release_speed_kmh;
+    out->release_ts=e->release_timestamp_ms;
+    out->dur_ms=e->braking_duration_ms; out->trail_ms=e->trail_brake_duration_ms;
+    out->release_ms=e->brake_release_duration_ms; out->speed_drop=e->speed_drop_kmh;
+    std::snprintf(out->seg_id, sizeof(out->seg_id), "%s", e->segment_id[0] ? e->segment_id : "");
+    return 0;
+}
+void c_brake_detector_reset(void* h) {
+    if(!h)return; auto o=reinterpret_cast<codriver::BrakeDetector*>(h); o->reset();
+}
+
+// ============================================================
+// Corner Speed Compare (Phase 2.3)
+// ============================================================
+void* c_corner_speed_create() { return new codriver::CornerSpeedCompare(); }
+void c_corner_speed_destroy(void* h) { if(!h)return; auto o=reinterpret_cast<codriver::CornerSpeedCompare*>(h); delete o; }
+int c_corner_speed_compare(void* h,
+    const char* seg_id, double ref_entry, double ref_min, double ref_exit, double ref_lat,
+    double act_entry, double act_min, double act_exit, double act_lat,
+    CCornerSpeedDelta* out) {
+    if(!h||!out)return -1; auto o=reinterpret_cast<codriver::CornerSpeedCompare*>(h);
+    codriver::TrackSegment seg{};
+    seg.segment_id = seg_id;
+    seg.reference_entry_speed_kmh = ref_entry;
+    seg.reference_speed_kmh = ref_min;
+    seg.reference_exit_speed_kmh = ref_exit;
+    seg.reference_lateral_g = ref_lat;
+    auto d = o->compare(seg, act_entry, act_min, act_exit, act_lat);
+    out->entry_kmh = d.actual_entry_kmh; out->ref_entry = d.reference_entry_kmh;
+    out->entry_delta = d.entry_delta_kmh;
+    out->min_kmh = d.actual_min_kmh; out->ref_min = d.reference_min_kmh;
+    out->min_delta = d.min_delta_kmh;
+    out->exit_kmh = d.actual_exit_kmh; out->ref_exit = d.reference_exit_kmh;
+    out->exit_delta = d.exit_delta_kmh;
+    out->lat_g = d.actual_lat_g; out->ref_lat_g = d.reference_lat_g;
+    out->lat_delta = d.lat_g_delta;
+    std::snprintf(out->seg_id, sizeof(out->seg_id), "%s", d.segment_id ? d.segment_id : "");
+    return 0;
+}
+
+// ============================================================
+// Analysis Pipeline (Phase 2.4)
+// ============================================================
+void* c_pipeline_create() { return new codriver::AnalysisPipeline(); }
+void c_pipeline_destroy(void* h) { if(!h)return; auto o=reinterpret_cast<codriver::AnalysisPipeline*>(h); delete o; }
+int c_pipeline_process_point(void* h, double lat, double lon, double dist,
+                              double speed, double long_g, double lat_g) {
+    if(!h)return 0; auto o=reinterpret_cast<codriver::AnalysisPipeline*>(h);
+    codriver::FusedPoint fp{};
+    fp.latitude=lat; fp.longitude=lon; fp.track_distance_m=dist;
+    fp.speed_kmh=speed; fp.long_g=long_g; fp.lat_g=lat_g;
+    return o->processPoint(fp)?1:0;
+}
+int c_pipeline_get_result_count(void* h) {
+    if(!h)return 0; auto o=reinterpret_cast<codriver::AnalysisPipeline*>(h);
+    return o->getResultCount();
+}
+int c_pipeline_get_result(void* h, int idx, CPipelineResult* out) {
+    if(!h||!out||idx<0)return -1; auto o=reinterpret_cast<codriver::AnalysisPipeline*>(h);
+    auto r=o->getResult(idx); if(!r)return -1;
+    std::snprintf(out->seg_id,sizeof(out->seg_id),"%s",r->segment_id);
+    std::snprintf(out->cause,sizeof(out->cause),"%s",r->root_cause);
+    std::snprintf(out->label,sizeof(out->label),"%s",r->root_cause_label);
+    std::snprintf(out->conf,sizeof(out->conf),"%s",r->confidence);
+    std::snprintf(out->msg,sizeof(out->msg),"%s",r->coach_message);
+    out->entry_spd=r->entry_speed_kmh; out->min_spd=r->min_speed_kmh;
+    out->exit_spd=r->exit_speed_kmh; out->lat_g=r->max_lat_g;
+    out->e_delta=r->entry_delta_kmh; out->m_delta=r->min_delta_kmh;
+    out->x_delta=r->exit_delta_kmh; out->l_delta=r->lat_g_delta;
+    out->loss_ms=r->time_loss_ms;
+    out->brake_dist=r->brake_distance_m; out->brake_peak=r->brake_peak_decel_g;
+    out->brake_drop=r->brake_speed_drop_kmh;
+    out->priority=r->coach_priority; out->tier=r->coach_tier;
+    return 0;
+}
+void c_pipeline_reset(void* h) {
+    if(!h)return; auto o=reinterpret_cast<codriver::AnalysisPipeline*>(h); o->reset();
+}
+
+// ============================================================
+// Best Lap Finder (Phase 2.5)
+// ============================================================
+void* c_best_lap_create() { return new codriver::BestLapFinder(); }
+void c_best_lap_destroy(void* h) { if(!h)return; auto o=reinterpret_cast<codriver::BestLapFinder*>(h); delete o; }
+int c_best_lap_record(void* h, int64_t t, double d) {
+    if(!h)return 0; auto o=reinterpret_cast<codriver::BestLapFinder*>(h);
+    return o->recordLap(t,d)?1:0;
+}
+int c_best_lap_get_best(void* h, CBestLapResult* out) {
+    if(!h||!out)return -1; auto o=reinterpret_cast<codriver::BestLapFinder*>(h);
+    auto r=o->getBest();
+    out->best_lap=r.best_lap_number; out->total_laps=r.total_laps;
+    out->best_time=r.best_lap_time_ms; out->total_time=r.total_time_ms;
+    out->optimal_time=r.optimal_lap_time_ms; out->has_opt=r.has_optimal?1:0;
+    return 0;
+}
+int c_best_lap_count(void* h) {
+    if(!h)return 0; auto o=reinterpret_cast<codriver::BestLapFinder*>(h);
+    return o->getLapCount();
+}
+int c_best_lap_record_sector(void* h, int sidx, int64_t t) {
+    if(!h)return 0; auto o=reinterpret_cast<codriver::BestLapFinder*>(h);
+    o->recordSector(sidx, t); return 1;
+}
+void c_best_lap_reset(void* h) {
+    if(!h)return; auto o=reinterpret_cast<codriver::BestLapFinder*>(h); o->reset();
 }
 
 } // extern "C"

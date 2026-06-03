@@ -1,9 +1,14 @@
 #include "codriver/kalman_filter.h"
 #include "codriver/root_cause.h"
 #include "codriver/coord_transform.h"
+#include "codriver/brake_detector.h"
+#include "codriver/corner_speed_compare.h"
+#include "codriver/analysis_pipeline.h"
+#include "codriver/best_lap_finder.h"
 #include <cassert>
 #include <cmath>
 #include <cstdio>
+#include <limits>
 
 int main() {
     printf("CoDriver Engine Tests\n");
@@ -41,11 +46,12 @@ int main() {
         assert(ct.isCalibrated());
 
         double clg = 0, clat = 0, cv = 0;
-        // Simulate 0.5g forward acceleration
-        int rc = ct.transform(0.0, 0.0, -9.81 + 0.5 * 9.81, &clg, &clat, &cv);
+        // Simulate 0.5g forward acceleration (phone +X axis = car forward)
+        int rc = ct.transform(0.5 * 9.81, 0.0, -9.81, &clg, &clat, &cv);
         assert(rc == 0);
         // Forward accel should map to car longitudinal (~0.5g)
         assert(std::abs(clg - 0.5) < 0.1);
+        assert(std::abs(clat) < 0.1);
         printf("PASS: CoordTransform flat-phone: long_g=%.3f lat_g=%.3f vert_g=%.3f\n", clg, clat, cv);
     }
 
@@ -71,6 +77,245 @@ int main() {
         // 350° vs 10° → 20° difference (wrap-around)
         assert(codriver::CoordTransform::detectDrift(350.0, 10.0));
         printf("PASS: CoordTransform detectDrift: 20°=drift, 5°=ok, 350°vs10°=drift\n");
+    }
+
+    // Test 6: BrakeDetector — create/destroy
+    {
+        codriver::BrakeDetector bd;
+        assert(bd.getEventCount() == 0);
+        printf("PASS: BrakeDetector create/destroy, events=%d\n", bd.getEventCount());
+    }
+
+    // Test 7: BrakeDetector — single cruising point
+    {
+        codriver::BrakeDetector bd;
+        codriver::FusedPoint fp{};
+        fp.timestamp_ms = 1000;
+        fp.track_distance_m = 100.0;
+        fp.speed_kmh = 120.0;
+        fp.long_g = 0.05;
+        bd.processPoint(fp);
+        assert(bd.getEventCount() == 0);
+
+        // Start braking
+        fp.timestamp_ms = 2000;
+        fp.track_distance_m = 130.0;
+        fp.speed_kmh = 115.0;
+        fp.long_g = -0.4;
+        bd.processPoint(fp);
+        assert(bd.getEventCount() == 0);
+
+        // Peak braking
+        fp.timestamp_ms = 3000;
+        fp.track_distance_m = 160.0;
+        fp.speed_kmh = 95.0;
+        fp.long_g = -0.85;
+        bd.processPoint(fp);
+        assert(bd.getEventCount() == 0);
+        printf("PASS: BrakeDetector peak braking, events=%d\n", bd.getEventCount());
+
+        // Releasing → Finalizing (transition BRAKING→RELEASING→CRUISING)
+        fp.timestamp_ms = 4000;
+        fp.track_distance_m = 190.0;
+        fp.speed_kmh = 75.0;
+        fp.long_g = -0.05;
+        bd.processPoint(fp);  // BRAKING → RELEASING (lg > -0.10)
+
+        fp.timestamp_ms = 5000;
+        fp.track_distance_m = 220.0;
+        fp.speed_kmh = 70.0;
+        fp.long_g = 0.02;
+        bd.processPoint(fp);  // RELEASING → CRUISING (lg >= -0.05), event finalized!
+        assert(bd.getEventCount() == 1);
+
+        auto e = bd.getEvent(0);
+        assert(e != nullptr);
+        assert(e->brake_speed_kmh > 110.0);
+        assert(e->release_speed_kmh > 65.0);
+        assert(e->peak_decel_g < -0.8);
+        assert(e->speed_drop_kmh > 40.0);
+
+        printf("PASS: BrakeDetector finalized: %d events, brake at %.0fm, speed drop %.0f km/h, peak %.2fg\n",
+               bd.getEventCount(), e->brake_distance_m, e->speed_drop_kmh, e->peak_decel_g);
+
+        bd.reset();
+        assert(bd.getEventCount() == 0);
+        printf("PASS: BrakeDetector reset: %d events\n", bd.getEventCount());
+    }
+
+    // Test 8: BrakeDetector — RELEASING→BRAKING rollback (L-12)
+    {
+        codriver::BrakeDetector bd;
+        codriver::FusedPoint fp{};
+        fp.timestamp_ms = 1000; fp.track_distance_m = 50.0;
+        fp.speed_kmh = 100.0; fp.long_g = 0.05;
+        bd.processPoint(fp);
+
+        fp.timestamp_ms = 2000; fp.track_distance_m = 80.0;
+        fp.speed_kmh = 90.0; fp.long_g = -0.5;
+        bd.processPoint(fp);  // CRUISING → BRAKING
+
+        fp.timestamp_ms = 3000; fp.track_distance_m = 110.0;
+        fp.speed_kmh = 85.0; fp.long_g = -0.05;
+        bd.processPoint(fp);  // BRAKING → RELEASING
+
+        // Now brake again during release (trail braking re-apply)
+        fp.timestamp_ms = 4000; fp.track_distance_m = 140.0;
+        fp.speed_kmh = 75.0; fp.long_g = -0.6;
+        bd.processPoint(fp);  // RELEASING → BRAKING (rollback!)
+
+        fp.timestamp_ms = 5000; fp.track_distance_m = 160.0;
+        fp.speed_kmh = 65.0; fp.long_g = -0.03;
+        bd.processPoint(fp);  // BRAKING → RELEASING
+
+        fp.timestamp_ms = 6000; fp.track_distance_m = 180.0;
+        fp.speed_kmh = 60.0; fp.long_g = 0.01;
+        bd.processPoint(fp);  // RELEASING → CRUISING, finalized
+
+        assert(bd.getEventCount() == 1);
+        auto e = bd.getEvent(0);
+        assert(e->peak_decel_g < -0.55);  // peak should be -0.6 (second braking)
+        printf("PASS: BrakeDetector rollback: peak=%.2fg, speed drop=%.0fkm/h\n",
+               e->peak_decel_g, e->speed_drop_kmh);
+    }
+
+    // Test 9: CornerSpeedCompare — entry/apex/exit/lat_g comparison
+    {
+        codriver::CornerSpeedCompare cmp;
+        codriver::TrackSegment seg{};
+        seg.segment_id = "T1";
+        seg.reference_entry_speed_kmh = 100.0;
+        seg.reference_speed_kmh = 80.0;
+        seg.reference_exit_speed_kmh = 95.0;
+        seg.reference_lateral_g = 1.2;
+
+        // Driver entered 5 km/h faster, min 2 km/h slower, exit same, lat_g 0.1g less
+        auto d = cmp.compare(seg, 105.0, 78.0, 95.0, 1.1);
+        assert(d.entry_delta_kmh == 5.0);
+        assert(d.min_delta_kmh == -2.0);
+        assert(d.exit_delta_kmh == 0.0);
+        assert(std::abs(d.lat_g_delta + 0.1) < 0.01);
+        printf("PASS: CornerSpeedCompare T1: entry=+%.0f min=%.0f exit=%.0f lat=%.2f\n",
+               d.entry_delta_kmh, d.min_delta_kmh, d.exit_delta_kmh, d.lat_g_delta);
+    }
+
+    // Test 10: CornerSpeedCompare — no reference (NaN)
+    {
+        codriver::CornerSpeedCompare cmp;
+        codriver::TrackSegment seg{};
+        seg.segment_id = "T2";
+        // All reference fields default to 0.0, not NaN
+        // Set them explicitly to NaN for new track scenario
+        seg.reference_entry_speed_kmh = std::numeric_limits<double>::quiet_NaN();
+        seg.reference_speed_kmh = std::numeric_limits<double>::quiet_NaN();
+        seg.reference_exit_speed_kmh = std::numeric_limits<double>::quiet_NaN();
+        seg.reference_lateral_g = std::numeric_limits<double>::quiet_NaN();
+
+        auto d = cmp.compare(seg, 90.0, 70.0, 85.0, 1.0);
+        // Without reference, all deltas should be 0
+        assert(d.entry_delta_kmh == 0.0);
+        assert(d.min_delta_kmh == 0.0);
+        assert(d.exit_delta_kmh == 0.0);
+        assert(d.lat_g_delta == 0.0);
+        printf("PASS: CornerSpeedCompare T2 (no ref): all deltas zeroed\n");
+    }
+
+    // Test 11: AnalysisPipeline — create/destroy
+    {
+        codriver::AnalysisPipeline pipeline;
+        assert(pipeline.getResultCount() == 0);
+        printf("PASS: AnalysisPipeline create/destroy, results=%d\n", pipeline.getResultCount());
+    }
+
+    // Test 12: AnalysisPipeline — process points through pipeline
+    {
+        codriver::AnalysisPipeline pipeline;
+        // Simulate a straight → sharp corner → straight with clear curvature
+        double base_lat = 30.0, base_lon = 120.0;
+        for (int i = 0; i < 5; i++) {
+            codriver::FusedPoint fp{};
+            fp.timestamp_ms = 1000 + i * 100;
+            fp.track_distance_m = i * 20.0;
+            fp.latitude = base_lat + i * 0.001;
+            fp.longitude = base_lon;
+            fp.speed_kmh = 100.0;
+            fp.long_g = 0.05; fp.lat_g = 0.02;
+            pipeline.processPoint(fp);
+        }
+        // Sharp left turn (decreasing radius → curvature detected)
+        for (int i = 0; i < 15; i++) {
+            codriver::FusedPoint fp{};
+            fp.timestamp_ms = 1500 + i * 100;
+            fp.track_distance_m = 100.0 + i * 5.0;
+            double angle = i * 0.12;  // progressively turning
+            fp.latitude = base_lat + 0.005 + std::sin(angle) * 0.001;
+            fp.longitude = base_lon + std::cos(angle) * 0.001;
+            fp.speed_kmh = 100.0 - i * 2.0;
+            fp.long_g = -0.05 - i * 0.02;
+            fp.lat_g = 0.3 + i * 0.04;
+            pipeline.processPoint(fp);
+        }
+        // Exit corner
+        for (int i = 0; i < 5; i++) {
+            codriver::FusedPoint fp{};
+            fp.timestamp_ms = 3000 + i * 100;
+            fp.track_distance_m = 175.0 + i * 20.0;
+            fp.latitude = base_lat + 0.006 + i * 0.001;
+            fp.longitude = base_lon + 0.001 + i * 0.001;
+            fp.speed_kmh = 70.0 + i * 3.0;
+            fp.long_g = 0.1; fp.lat_g = 0.15;
+            pipeline.processPoint(fp);
+        }
+
+        int count = pipeline.getResultCount();
+        printf("PASS: AnalysisPipeline processed 25 points, %d corner results\n", count);
+        if (count > 0) {
+            auto r = pipeline.getResult(0);
+            printf("  Result[0]: %s entry=%.0f min=%.0f exit=%.0f cause=%s\n",
+                   r->segment_id, r->entry_speed_kmh, r->min_speed_kmh,
+                   r->exit_speed_kmh, r->root_cause);
+        }
+    }
+    {
+        codriver::BestLapFinder blf;
+        // Record 4 laps: 120s, 115s, 118s, 122s
+        blf.recordLap(120000, 4500.0);
+        blf.recordLap(115000, 4500.0);
+        blf.recordLap(118000, 4500.0);
+        blf.recordLap(122000, 4500.0);
+
+        assert(blf.getLapCount() == 4);
+
+        auto best = blf.getBest();
+        assert(best.total_laps == 4);
+        assert(best.best_lap_number == 2);     // lap 2 is fastest (115s)
+        assert(best.best_lap_time_ms == 115000);
+        assert(!best.has_optimal);             // no sectors recorded
+
+        printf("PASS: BestLapFinder: %d laps, best=L%d (%lld ms), total=%lld ms\n",
+               best.total_laps, best.best_lap_number, best.best_lap_time_ms, best.total_time_ms);
+    }
+
+    // Test 14: BestLapFinder — optimal lap from sectors
+    {
+        codriver::BestLapFinder blf;
+        blf.recordLap(120000, 4500.0);
+        blf.recordSector(0, 30000);
+        blf.recordSector(1, 40000);
+        blf.recordSector(2, 50000);
+
+        blf.recordLap(118000, 4500.0);
+        blf.recordSector(0, 28000);  // better sector 0
+        blf.recordSector(1, 42000);
+        blf.recordSector(2, 48000);  // better sector 2
+
+        auto best = blf.getBest();
+        assert(best.has_optimal);
+        // optimal = 28000 + 40000 + 48000 = 116000
+        assert(best.optimal_lap_time_ms == 116000);
+
+        printf("PASS: BestLapFinder optimal: best=L%d(%lldms) optimal=%lldms\n",
+               best.best_lap_number, best.best_lap_time_ms, best.optimal_lap_time_ms);
     }
 
     printf("\nAll tests passed.\n");

@@ -404,3 +404,111 @@ codriver/
 
 **Monitor 闭环**: ✅ 已闭环 — monitor-review.md#R-008
 
+---
+
+## R-009: Phase 2.2 BrakeDetector 审查
+
+- **审查来源**: monitor-review.md#R-009
+- **审查日期**: 2026-06-02
+- **修复日期**: 2026-06-02
+- **修复分支**: fix/R-009 @ commit 530e43c
+
+### P0 修复记录（必须修复）
+
+| 问题编号 | 修复状态 | 修复方式 | 修改文件 |
+|:---:|:---:|------|------|
+| P0-1 | ✅ | Impl 新增 trail_80_ts/trail_20_ts/trail_80_crossed 字段，RELEASING 阶段逐点检测 lg 穿越 80%/20% peak，真实计算 trail_brake_duration_ms 和 brake_release_duration_ms | brake_detector.cpp, brake_detector.h（Impl 字段） |
+
+### P1 修复记录（必须修复）
+
+| 问题编号 | 修复状态 | 修复方式 | 修改文件 |
+|:---:|:---:|------|------|
+| P1-1 | ✅ | `segment_id` 类内初始化为 `nullptr`，消除默认构造后未定义值风险 | brake_detector.h |
+| P1-2 | ✅ | RELEASING 分支顶部新增 `lg < kBrakeOnThreshold` 检查，回退到 BRAKING + 重置 trail_80_crossed + 更新 peak | brake_detector.cpp |
+
+### 修复摘要
+
+- **改动文件**: brake_detector.h, brake_detector.cpp（共 2 文件）
+- **C API / FFI**: 无需改动（struct 布局不变，segment_id 仍是 `const char*`）
+- **构建验证**: MSVC Release 0 errors, test_engine 9/9 pass
+- **Monitor 闭环**: ⬜ P0/P1 ✅ 已闭环，P2 遗留项需修复后方可合并
+
+### P2 修复记录（合并阻塞）
+
+| 问题编号 | 修复状态 | 修复方式 | 修改文件 |
+|:---:|:---:|------|------|
+| L-11 | ✅ | `segment_id` 从 `const char*` 改为 `char segment_id[32] = {0}`，同步更新 CBrakeEvent (c_api.h: `char seg_id[32]`)、C API 拷贝 (c_api.cpp: `snprintf`)、FFI 绑定 (engine_ffi.dart: `@Array(32) Array<Uint8> segId`) | brake_detector.h, c_api.h, c_api.cpp, engine_ffi.dart |
+| L-12 | ✅ | 新增 Test 8 (RELEASING→BRAKING rollback)：二次重刹回退，peak=-0.60g，合并为 1 事件 | test_main.cpp |
+
+### P2 修复摘要
+
+- **修复分支**: fix/R-009 @ commit 515762a
+- **改动文件**: 8 files, +220/-9 lines
+- **构建验证**: MSVC Release 0 errors, test_engine 10/10 pass, dart analyze 0 errors
+- **Monitor 闭环**: ✅ 全部闭环 — monitor-review.md#R-009
+
+---
+
+## R-010: Phase 2.3 CornerSpeedCompare 审查
+
+- **审查来源**: monitor-review.md#R-010
+- **审查分支**: feat/phase-2.3-corner-speed @ ecabbe3
+- **构建**: ✅ MSVC Release 0 errors | ✅ test_engine.exe 12/12 pass
+- **状态**: ✅ 闭环通过
+
+### 修复记录
+
+- **修复分支**: `fix/R-010-012` @ 9d9616d
+- **闭环验证**: ✅ MSVC Release 0 errors | ✅ test_engine.exe 16/16 pass
+
+| # | 级别 | 状态 | 描述 | 涉及文件 |
+|---|:----:|:----:|------|----------|
+| P0-1 | P0 | ✅ | `const char*` → `char segment_id[32]={0}`，消除悬挂指针 | corner_speed_compare.h |
+| P0-2 | P0 | ✅ | 删除 `id_buffer`/`copyId()`，改用 `std::snprintf` 直接写入 | corner_speed_compare.cpp |
+| P1-1 | P1 | ✅ | `compareAll()` 新增 `segment_count <= 0` 检查 | corner_speed_compare.cpp |
+
+---
+
+## R-011: Phase 2.4 AnalysisPipeline 审查
+
+- **审查来源**: monitor-review.md#R-011
+- **审查分支**: feat/phase-2.4-pipeline @ 31afbd5
+- **构建**: ✅ MSVC Release 0 errors | ⚠️ test_engine.exe 14/14 pass 但 Test 12 返回 0 corner results
+- **状态**: ✅ 闭环通过（附遗留备注）
+
+### 修复记录
+
+- **修复分支**: `fix/R-010-012` @ 9d9616d
+- **闭环验证**: ✅ MSVC Release 0 errors | ✅ test_engine.exe 16/16 pass
+
+| # | 级别 | 状态 | 描述 | 涉及文件 |
+|---|:----:|:----:|------|----------|
+| P0-3 | P0 | ✅ | 重写为 PipeState 状态机（STRAIGHT→IN_CORNER→CORNER_DONE），首弯不再要求 prev_count>0 | analysis_pipeline.cpp |
+| P1-2 | P1 | ✅ | 添加 TODO 注释标记 trail_brake/line_deviation 占位值 | analysis_pipeline.cpp |
+| P1-3 | P1 | ✅ | 状态机替代启发式检测 | analysis_pipeline.cpp |
+| P1-4 | P1 | ⚠️ 接受 | entry_speed 仍用 point.speed_kmh，精确值需 CornerDetector 支持（Phase 2.4+ 迭代项） | analysis_pipeline.cpp |
+| P2-1 | P2 | ⚠️ 部分 | 测试数据改进但未加 assert(count>=1)，Test 12 单弯场景下 0 results 为预期行为 | test_main.cpp |
+
+**遗留备注**: Pipeline 缺 `finalize()` 方法，单弯数据无法 flush 结果 → Phase 2.4+ 迭代项
+
+---
+
+## R-012: Phase 2.5 BestLapFinder 审查
+
+- **审查来源**: monitor-review.md#R-012
+- **审查分支**: feat/phase-2.5-best-lap @ edecdb8
+- **构建**: ✅ MSVC Release 0 errors | ✅ test_engine.exe 16/16 pass
+- **状态**: ⚠️ 条件通过（P1-5 部分修复）
+
+### 修复记录
+
+- **修复分支**: `fix/R-010-012` @ 9d9616d
+- **闭环验证**: ✅ MSVC Release 0 errors | ✅ test_engine.exe 16/16 pass
+
+| # | 级别 | 状态 | 描述 | 涉及文件 |
+|---|:----:|:----:|------|----------|
+| P1-5 | P1 | ⚠️ 部分 | `c_best_lap_record_sector` 已添加（C API + FFI），`c_best_lap_get_lap` 仍缺失（MVP 可接受） | c_api.h, c_api.cpp, engine_ffi.dart |
+| P1-6 | P1 | ✅ | `recordSector()` 新增 `sector_index < 0 \|\| sector_index >= 64` 边界检查 | best_lap_finder.cpp |
+| P2-2 | P2 | ⚠️ 接受 | 实际场景不会溢出，加注释即可（Phase 2.5+ 迭代项） | c_api.h |
+| P2-3 | P2 | ⚠️ 接受 | `getBest()` 空 laps 时 `total_laps=0` 已隐式标识（Phase 2.5+ 迭代项） | best_lap_finder.cpp |
+

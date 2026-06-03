@@ -79,6 +79,58 @@ int c_coord_transform_is_calibrated(void* handle);
 // Returns 1 if drift > 15°, 0 otherwise. Pass nullptr for handle.
 int c_coord_transform_detect_drift(void* handle, double gps_heading, double imu_heading);
 
+// --- Brake Detector (Phase 2.2) ---
+// C-side BrakeEvent struct (char arrays, no dangling pointers)
+typedef struct { double brake_lat, brake_lon, brake_dist, brake_spd, peak_g, peak_dist;
+    double rel_lat, rel_lon, rel_dist, rel_spd;
+    double dur_ms, trail_ms, release_ms, speed_drop; int64_t brake_ts, release_ts;
+    char seg_id[32]; } CBrakeEvent;
+void* c_brake_detector_create();
+void c_brake_detector_destroy(void* handle);
+// Returns 1 if a braking event was finalized, 0 otherwise
+int c_brake_detector_process_point(void* handle, double lat, double lon, double dist,
+                                    double speed, double long_g, int64_t ts);
+int c_brake_detector_get_event_count(void* handle);
+int c_brake_detector_get_event(void* handle, int index, CBrakeEvent* out);
+void c_brake_detector_reset(void* handle);
+
+// --- Corner Speed Compare (Phase 2.3) ---
+typedef struct { double entry_kmh, ref_entry, entry_delta;
+    double min_kmh, ref_min, min_delta;
+    double exit_kmh, ref_exit, exit_delta;
+    double lat_g, ref_lat_g, lat_delta; char seg_id[32]; } CCornerSpeedDelta;
+void* c_corner_speed_create();
+void c_corner_speed_destroy(void* handle);
+// Compare one corner: fills CCornerSpeedDelta. Returns 0 on success.
+int c_corner_speed_compare(void* handle,
+    const char* seg_id, double ref_entry, double ref_min, double ref_exit, double ref_lat,
+    double act_entry, double act_min, double act_exit, double act_lat,
+    CCornerSpeedDelta* out);
+
+// --- Analysis Pipeline (Phase 2.4) ---
+typedef struct { char seg_id[32], cause[32], label[32], conf[16], msg[256];
+    double entry_spd, min_spd, exit_spd, lat_g;
+    double e_delta, m_delta, x_delta, l_delta, loss_ms;
+    double brake_dist, brake_peak, brake_drop; int priority, tier; } CPipelineResult;
+void* c_pipeline_create();
+void c_pipeline_destroy(void* handle);
+// Returns 1 if a corner analysis completed (result available via get_result)
+int c_pipeline_process_point(void* handle, double lat, double lon, double dist,
+                              double speed, double long_g, double lat_g);
+int c_pipeline_get_result_count(void* handle);
+int c_pipeline_get_result(void* handle, int index, CPipelineResult* out);
+void c_pipeline_reset(void* handle);
+
+// --- Best Lap Finder (Phase 2.5) ---
+typedef struct { int best_lap, total_laps; int64_t best_time, total_time, optimal_time; int has_opt; } CBestLapResult;
+void* c_best_lap_create();
+void c_best_lap_destroy(void* handle);
+int c_best_lap_record(void* handle, int64_t lap_time_ms, double lap_dist_m);
+int c_best_lap_get_best(void* handle, CBestLapResult* out);
+int c_best_lap_count(void* handle);
+int c_best_lap_record_sector(void* handle, int sector_index, int64_t sector_time_ms);
+void c_best_lap_reset(void* handle);
+
 #ifdef __cplusplus
 }
 #endif
