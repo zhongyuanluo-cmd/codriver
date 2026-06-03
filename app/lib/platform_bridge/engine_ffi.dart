@@ -118,6 +118,17 @@ final class CLapRecord extends Struct {
   @Double() external double avgSpeedKmh;
 }
 
+final class CSessionStats extends Struct {
+  @Int32()  external int totalLaps;
+  @Int32()  external int bestLap;
+  @Int64()  external int bestTime;
+  @Int64()  external int totalTime;
+  @Int64()  external int optimalTime;
+  @Int32()  external int hasOpt;
+  @Double() external double avgSpeed;
+  @Double() external double consistency;
+}
+
 // ============================================================
 // EngineFFI — complete C API bindings (48/48)
 // ============================================================
@@ -323,4 +334,25 @@ class EngineFFI {
           int Function(Pointer<Void>, int, int)>('c_best_lap_record_sector')(h, sectorIdx, sectorTimeMs);
   static void bestLapReset(Pointer<Void> h) =>
       lib.lookupFunction<Void Function(Pointer<Void>), void Function(Pointer<Void>)>('c_best_lap_reset')(h);
+
+  // ============================================================
+  // Session Stats — Phase 2.8 (5/5)
+  // ============================================================
+  static Pointer<Void> sessionStatsCreate() =>
+      lib.lookupFunction<Pointer<Void> Function(), Pointer<Void> Function()>('c_session_stats_create')();
+  static void sessionStatsDestroy(Pointer<Void> h) =>
+      lib.lookupFunction<Void Function(Pointer<Void>), void Function(Pointer<Void>)>('c_session_stats_destroy')(h);
+  static void sessionStatsRecordLap(Pointer<Void> h, int lapTimeMs, double lapDistM) =>
+      lib.lookupFunction<Void Function(Pointer<Void>, Int64, Double),
+          void Function(Pointer<Void>, int, double)>('c_session_stats_record_lap')(h, lapTimeMs, lapDistM);
+  static void sessionStatsRecordSector(Pointer<Void> h, int sectorIdx, int sectorTimeMs) =>
+      lib.lookupFunction<Void Function(Pointer<Void>, Int32, Int64),
+          void Function(Pointer<Void>, int, int)>('c_session_stats_record_sector')(h, sectorIdx, sectorTimeMs);
+  static int sessionStatsCompute(Pointer<Void> h, Pointer<CSessionStats> out) =>
+      lib.lookupFunction<Int32 Function(Pointer<Void>, Pointer<CSessionStats>),
+          int Function(Pointer<Void>, Pointer<CSessionStats>)>('c_session_stats_compute')(h, out);
+  static int sessionStatsCount(Pointer<Void> h) =>
+      lib.lookupFunction<Int32 Function(Pointer<Void>), int Function(Pointer<Void>)>('c_session_stats_count')(h);
+  static void sessionStatsReset(Pointer<Void> h) =>
+      lib.lookupFunction<Void Function(Pointer<Void>), void Function(Pointer<Void>)>('c_session_stats_reset')(h);
 }

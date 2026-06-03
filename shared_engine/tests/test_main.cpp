@@ -5,6 +5,7 @@
 #include "codriver/corner_speed_compare.h"
 #include "codriver/analysis_pipeline.h"
 #include "codriver/best_lap_finder.h"
+#include "codriver/session_stats.h"
 #include <cassert>
 #include <cmath>
 #include <cstdio>
@@ -372,6 +373,26 @@ int main() {
 
         printf("PASS: BestLapFinder optimal: best=L%d(%lldms) optimal=%lldms\n",
                best.best_lap_number, best.best_lap_time_ms, best.optimal_lap_time_ms);
+    }
+
+    // Test 15: SessionStats — compute session summary
+    {
+        codriver::SessionStatsCalc stats;
+        stats.recordLap(120000, 4500.0);
+        stats.recordLap(115000, 4500.0);
+        stats.recordLap(118000, 4500.0);
+        stats.recordLap(122000, 4500.0);
+
+        auto s = stats.compute();
+        assert(s.total_laps == 4);
+        assert(s.best_lap_number == 2);
+        assert(s.best_lap_time_ms == 115000);
+        assert(s.avg_speed_kmh > 130);
+        assert(s.consistency_score > 80);  // 4 laps within 7s spread
+
+        printf("PASS: SessionStats: %d laps, best=L%d(%lldms), avg=%.0fkm/h, consistency=%.1f\n",
+               s.total_laps, s.best_lap_number, s.best_lap_time_ms,
+               s.avg_speed_kmh, s.consistency_score);
     }
 
     printf("\nAll tests passed.\n");

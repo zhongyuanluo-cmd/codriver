@@ -37,6 +37,7 @@ add_library(codriver_engine STATIC
     src/corner_speed_compare.cpp
     src/analysis_pipeline.cpp
     src/best_lap_finder.cpp
+    src/session_stats.cpp
     src/c_api.cpp
 )
 
