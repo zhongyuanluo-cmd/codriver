@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from app.api import sessions, tracks, coach, analysis
 
 app = FastAPI(
     title="CoDriver API",
@@ -14,6 +15,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Register routers
+app.include_router(sessions.router)
+app.include_router(tracks.router)
+app.include_router(coach.router)
+app.include_router(analysis.router)
 
 
 @app.get("/api/health")
