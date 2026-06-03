@@ -112,7 +112,7 @@ final class CBestLapResult extends Struct {
 }
 
 // ============================================================
-// EngineFFI — complete C API bindings (45/45)
+// EngineFFI — complete C API bindings (46/46)
 // ============================================================
 
 class EngineFFI {
@@ -292,7 +292,7 @@ class EngineFFI {
       lib.lookupFunction<Void Function(Pointer<Void>), void Function(Pointer<Void>)>('c_pipeline_reset')(h);
 
   // ============================================================
-  // Best Lap Finder — Phase 2.5 (4/4)
+  // Best Lap Finder — Phase 2.5 (5/5)
   // ============================================================
   static Pointer<Void> bestLapCreate() =>
       lib.lookupFunction<Pointer<Void> Function(), Pointer<Void> Function()>('c_best_lap_create')();
