@@ -1,6 +1,7 @@
 """CoDriver Pydantic data models - aligned with data-structures.md"""
 
 from datetime import datetime
+from typing import List
 from pydantic import BaseModel, Field
 
 
@@ -61,10 +62,71 @@ class LapRecord(BaseModel):
     session_id: str
     lap_number: int
     lap_time_ms: int
+    lap_distance_m: float
+    avg_speed_kmh: float
     is_valid: bool = True
     is_personal_best: bool = False
-    max_speed_kmh: float = 0.0
-    max_lat_g: float = 0.0
+    timestamp_start: datetime | None = None
+    timestamp_end: datetime | None = None
+
+
+# --- Phase 2.7: Analysis schemas ---
+
+class CornerAnalysis(BaseModel):
+    """Per-corner analysis result from pipeline"""
+    segment_id: str
+    entry_speed_kmh: float
+    min_speed_kmh: float
+    exit_speed_kmh: float
+    max_lat_g: float
+    entry_delta_kmh: float
+    min_delta_kmh: float
+    exit_delta_kmh: float
+    lat_g_delta: float
+    root_cause: str = ""
+    root_cause_label: str = ""
+    confidence: str = "medium"
+    time_loss_ms: float = 0.0
+    coach_message: str = ""
+    coach_priority: int = 0
+    brake_distance_m: float = 0.0
+    brake_peak_g: float = 0.0
+    speed_drop_kmh: float = 0.0
+    feedback_tier: int = 2
+
+
+class LapAnalysis(BaseModel):
+    """Full lap analysis result"""
+    lap_number: int
+    lap_time_ms: int
+    best_lap_time_ms: int | None = None
+    corners: List[CornerAnalysis] = []
+
+
+class SessionSummary(BaseModel):
+    """Session-level statistics"""
+    session_id: str
+    total_laps: int
+    best_lap_number: int
+    best_lap_time_ms: int
+    total_time_ms: int
+    optimal_lap_time_ms: int | None = None
+    avg_speed_kmh: float = 0.0
+
+
+class SpeedCurvePoint(BaseModel):
+    """Single point on the speed vs distance curve"""
+    distance: float
+    current_speed: float
+    reference_speed: float = 0.0
+
+
+class AnalyzeResponse(BaseModel):
+    """Complete analysis response for a session"""
+    session_id: str
+    summary: SessionSummary
+    laps: List[LapAnalysis] = []
+    speed_curve: List[SpeedCurvePoint] = []
 
 
 class Session(BaseModel):
