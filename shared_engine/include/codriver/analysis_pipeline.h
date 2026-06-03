@@ -61,6 +61,10 @@ public:
     int getResultCount() const;
     const PipelineResult* getResult(int index) const;
 
+    // Flush any pending corner result when session ends.
+    // Returns true if a result was flushed (corner was in progress).
+    bool finalize();
+
     // Reset for new session/lap
     void reset();
 

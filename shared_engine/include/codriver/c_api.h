@@ -119,15 +119,20 @@ int c_pipeline_process_point(void* handle, double lat, double lon, double dist,
                               double speed, double long_g, double lat_g);
 int c_pipeline_get_result_count(void* handle);
 int c_pipeline_get_result(void* handle, int index, CPipelineResult* out);
+// Flush any pending corner on session end. Returns count of results flushed (0 or 1).
+int c_pipeline_finalize(void* handle);
 void c_pipeline_reset(void* handle);
 
 // --- Best Lap Finder (Phase 2.5) ---
 typedef struct { int best_lap, total_laps; int64_t best_time, total_time, optimal_time; int has_opt; } CBestLapResult;
+typedef struct { int lap_number; int64_t lap_time_ms; double lap_distance_m; double avg_speed_kmh; } CLapRecord;
 void* c_best_lap_create();
 void c_best_lap_destroy(void* handle);
 int c_best_lap_record(void* handle, int64_t lap_time_ms, double lap_dist_m);
 int c_best_lap_get_best(void* handle, CBestLapResult* out);
 int c_best_lap_count(void* handle);
+// Get lap record by index. Returns 0 on success, -1 if index out of range or null.
+int c_best_lap_get_lap(void* handle, int index, CLapRecord* out);
 int c_best_lap_record_sector(void* handle, int sector_index, int64_t sector_time_ms);
 void c_best_lap_reset(void* handle);
 

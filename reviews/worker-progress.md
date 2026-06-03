@@ -512,3 +512,35 @@ codriver/
 | P2-2 | P2 | ⚠️ 接受 | 实际场景不会溢出，加注释即可（Phase 2.5+ 迭代项） | c_api.h |
 | P2-3 | P2 | ⚠️ 接受 | `getBest()` 空 laps 时 `total_laps=0` 已隐式标识（Phase 2.5+ 迭代项） | best_lap_finder.cpp |
 
+---
+
+## 迭代项修复: ITER-1 + ITER-2
+
+- **审查来源**: monitor-review.md#R-011/R-012 迭代项追踪
+- **修复日期**: 2026-06-02
+- **修复分支**: `fix/ITER-1-2`
+- **构建**: ✅ MSVC Release 0 errors | ✅ test_engine.exe All tests passed (18 tests)
+- **状态**: ✅ 全部通过
+
+### ITER-1: Pipeline `finalize()` 方法
+
+| 修改项 | 文件 | 描述 |
+|--------|------|------|
+| 声明 | analysis_pipeline.h | 新增 `bool finalize();` — session 结束时 flush 最后一个 pending 弯道 |
+| 实现 | analysis_pipeline.cpp | 当 `state == IN_CORNER` 时，执行与 `CORNER_DONE` 分支相同的结果产出逻辑（segment 查找 → speed delta → root cause → coach → push result），然后重置 state 为 STRAIGHT。返回 `true` 表示成功 flush |
+| C API | c_api.h | 新增 `int c_pipeline_finalize(void* handle);` — 返回 flush 的结果数 (0/1) |
+| C API 实现 | c_api.cpp | 调用 `pipeline->finalize()`，返回 1/0 |
+| FFI 绑定 | engine_ffi.dart | 新增 `pipelineFinalize(Pointer<Void>) → int`，计数器更新 4/4→5/5 |
+| 测试 | test_main.cpp | Test 13: 单弯道场景 → `finalize()` 前 count=0，后 count=1，flushed=true ✅ |
+
+### ITER-2: `c_best_lap_get_lap` C API + FFI
+
+| 修改项 | 文件 | 描述 |
+|--------|------|------|
+| C struct | c_api.h | 新增 `CLapRecord { int lap_number; int64_t lap_time_ms; double lap_distance_m; double avg_speed_kmh; }` |
+| C API 声明 | c_api.h | 新增 `int c_best_lap_get_lap(void* handle, int index, CLapRecord* out);` |
+| C API 实现 | c_api.cpp | 从 `BestLapFinder::getLap(index)` 读取 `LapRecord`，填充 `CLapRecord`，null/index 检查 |
+| Dart struct | engine_ffi.dart | 新增 `CLapRecord` struct（Int32 + Int64 + Double + Double） |
+| FFI 绑定 | engine_ffi.dart | 新增 `bestLapGetLap(Pointer<Void>, int, Pointer<CLapRecord>) → int`，计数器更新 5/5→6/6 |
+| 测试 | test_main.cpp | Test 13 内新增: `getLap(0)=L1(120000ms)`, `getLap(1)=L2(115000ms)`, out-of-range 返回 nullptr ✅ |
+
