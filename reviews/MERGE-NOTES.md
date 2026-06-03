@@ -107,3 +107,71 @@
 1. **`pipelineFinalize()` 必须调用**: 在 Flutter app 中，当圈结束（lap timer 触发）或 session 结束时，调用 `EngineFFI.pipelineFinalize(handle)` 来获取最后一个未完成的弯道分析结果
 2. **`bestLapGetLap()` 可用**: 现在可以通过 `EngineFFI.bestLapGetLap(handle, index, out)` 获取任意圈的 `LapRecord`（圈号、圈时、距离、平均速度），不再只有 `getBest()` 一种获取方式
 3. **`monitor-review.md` 迭代项追踪表已更新**: ITER-1/ITER-2 标记为 ✅ 已修复
+
+---
+
+### R-013/R-014 — Phase 2.6~2.7 闭环验证 (2026-06-03)
+
+**合并方式**: `git merge fix/R-013-014 --no-ff`
+**合并提交**: merge commit (parent: master @ b534b16)
+**修复分支**: `fix/R-013-014` @ `0be356a`
+**Worker 分支**: `fix/R-013-014` @ `20a74b6` (fix) + Monitor @ `0be356a` (closure docs)
+**审查来源**: `monitor-review.md` R-013 / R-014 章节
+
+**Monitor 合并时微调**: 无
+- Worker 修复全部通过闭环验证，代码原样合入
+- Monitor 仅追加了 `monitor-review.md` 闭环确认章节（commit `0be356a`）
+
+**本次合入内容**:
+
+Phase 2.6 (Flutter 可视化) + Phase 2.7 (Backend API) + R-013/R-014 修复，3 个分支一次合入：
+
+| 来源分支 | 描述 | commit |
+|----------|------|--------|
+| `feat/phase-2.6-flutter-viz` | Flutter fl_chart 速度曲线 + AnalysisScreen | `ade30ae` |
+| `feat/phase-2.7-backend-api` | FastAPI analysis endpoint + schemas | `812b2a8` |
+| `fix/R-013-014` | R-013 弯道高亮 + R-014 router/schema 修复 | `20a74b6` → `0be356a` |
+
+**R-013 修复 (Flutter)**:
+
+| # | 修复 | 文件 |
+|---|------|------|
+| P0-1 | `SpeedChart._buildCornerLines()` + `extraLinesData` 渲染弯道橙色虚线标注 | `speed_chart.dart` |
+| P1-1 TODO | SpeedPoint/CornerZone 标注 Phase 3 替换 | `speed_chart.dart` |
+| P1-2 TODO | analysis_screen 标注 Phase 3 API 对接 | `analysis_screen.dart` |
+
+**R-014 修复 (Backend)**:
+
+| # | 修复 | 文件 |
+|---|------|------|
+| P0-1 | Router prefix `/api/sessions` → `/api/analysis`，端点 → `/sessions/{session_id}` | `analysis.py` |
+| P1-1 | LapRecord 恢复 `is_valid: bool = True` + `is_personal_best: bool = False` | `schemas.py` |
+| P1-2 | CornerAnalysis +`brake_distance_m`, `brake_peak_g`, `speed_drop_kmh`, `feedback_tier` | `schemas.py` |
+| P1-3 | 移除 `if not session_id` 死代码，替换为 404 TODO | `analysis.py` |
+
+**已知遗留**:
+| 项 | 说明 | 后续处理 |
+|:---:|------|------|
+| P1-4 | 3 个 stub 端点仍返回 200 (应 501) | Phase 3 API 实现时统一升级 |
+| Mock | `_mock_corner_analysis()` 未填充新制动字段 | Phase 3 FFI 集成时替换 |
+| P1-1 TODO | SpeedPoint/CornerZone 需替换为 API 模型 | Phase 3 API 对接 |
+| P1-2 TODO | Mock 数据需替换为 Backend API 调用 | Phase 3 API 对接 |
+
+**合入文件** (9 files, +1359 -131):
+- `app/lib/main.dart` — AnalysisScreen 替换 placeholder
+- `app/lib/ui/screens/analysis_screen.dart` — 新增 (174 行)
+- `app/lib/ui/widgets/speed_chart.dart` — 新增 (181 行)
+- `app/pubspec.lock` — fl_chart/riverpod 依赖
+- `app/pubspec.yaml` — riverpod 修正
+- `backend/app/api/analysis.py` — 新增 (135 行)
+- `backend/app/main.py` — 注册 analysis router
+- `backend/app/models/schemas.py` — +CornerAnalysis/LapAnalysis 等 schemas
+- `reviews/monitor-review.md` — R-013/R-014 审查 + 闭环确认
+
+### Worker 注意事项
+
+1. **`SpeedChart` 现在支持弯道标注**: `corners` 参数已被使用（P0-1 修复），传入 `List<CornerZone>` 即可渲染橙色虚线 + 标签
+2. **Backend analysis 端点路径已变更**: `GET /api/analysis/sessions/{session_id}`（非旧的 `/api/sessions/{session_id}/analyze`）
+3. **`LapRecord` 已恢复 `is_valid` / `is_personal_best`**: Flutter 侧可使用这两个字段过滤无效圈/标记最快圈
+4. **`CornerAnalysis` 新增 4 个制动字段**: Phase 3 FFI 映射时使用 `brake_distance_m`, `brake_peak_g`, `speed_drop_kmh`, `feedback_tier`
+5. **所有 TODO(Phase 3) 标注**: Flutter 侧 SpeedPoint/CornerZone/mock 数据均有 Phase 3 替换标注，Phase 3 API 对接时统一处理
