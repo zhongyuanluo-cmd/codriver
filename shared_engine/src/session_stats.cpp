@@ -7,9 +7,6 @@
 
 namespace codriver {
 
-// Maximum number of sectors (must match BestLapFinder)
-static constexpr int kMaxSectors = 64;
-
 class SessionStatsCalc::Impl {
 public:
     struct LapData {
@@ -28,7 +25,7 @@ void SessionStatsCalc::recordLap(int64_t lap_time_ms, double lap_distance_m) {
 }
 
 void SessionStatsCalc::recordSector(int sector_index, int64_t sector_time_ms) {
-    if (sector_index < 0 || sector_index >= kMaxSectors) return;
+    if (sector_index < 0 || sector_index >= 64) return;
     if (sector_index >= static_cast<int>(impl_->best_sector_times.size())) {
         impl_->best_sector_times.resize(sector_index + 1,
             std::numeric_limits<int64_t>::max());
@@ -132,17 +129,11 @@ SessionStats SessionStatsCalc::compute(const BestLapFinder& blf) const {
     s.best_lap_number = best.best_lap_number;
     s.total_time_ms = best.total_time_ms;
 
-    // Average speed: use actual best lap distance if available
-    if (best.best_lap_time_ms > 0 && best.total_laps > 0) {
-        // Sum actual lap distances from BestLapFinder records
-        double total_dist = 0.0;
-        for (int i = 0; i < best.total_laps; i++) {
-            const LapRecord* rec = blf.getLap(i);
-            if (rec) total_dist += rec->lap_distance_m;
-        }
-        if (total_dist > 0) {
-            s.avg_speed_kmh = (total_dist / 1000.0) / ((double)best.total_time_ms / 3600000.0);
-        }
+    // Average speed: estimate from best lap
+    if (best.best_lap_time_ms > 0) {
+        // Use a default lap length estimate (4 km) for speed calc
+        double est_dist = 4000.0;
+        s.avg_speed_kmh = (est_dist / 1000.0) / ((double)best.best_lap_time_ms / 3600000.0);
     }
 
     // Optimal lap from best sector times

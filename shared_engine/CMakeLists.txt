@@ -38,6 +38,7 @@ add_library(codriver_engine STATIC
     src/analysis_pipeline.cpp
     src/best_lap_finder.cpp
     src/session_stats.cpp
+    src/coach_engine.cpp
     src/c_api.cpp
 )
 
