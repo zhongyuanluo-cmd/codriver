@@ -57,11 +57,13 @@ void CornerDetector::processPoint(double dist, double lat, double lon, double sp
     w.lon[0] = w.lon[1]; w.lon[1] = w.lon[2]; w.lon[2] = lon;
     if (++w.idx < 3) return;
 
-    // L-12: Menger Curvature computed internally
+    // L-12: Menger Curvature (P0-1: Haversine distance for spatial accuracy)
+    double d1 = haversineMeters(w.lat[0], w.lon[0], w.lat[1], w.lon[1]);
+    double d2 = haversineMeters(w.lat[1], w.lon[1], w.lat[2], w.lon[2]);
+    double d3 = haversineMeters(w.lat[0], w.lon[0], w.lat[2], w.lon[2]);
+    // Cross product still uses lat/lon diff in degrees for sign only (direction)
     double dx1 = w.lat[1]-w.lat[0], dy1 = w.lon[1]-w.lon[0];
     double dx2 = w.lat[2]-w.lat[1], dy2 = w.lon[2]-w.lon[1];
-    double dx3 = w.lat[2]-w.lat[0], dy3 = w.lon[2]-w.lon[0];
-    double d1 = std::sqrt(dx1*dx1+dy1*dy1), d2 = std::sqrt(dx2*dx2+dy2*dy2), d3 = std::sqrt(dx3*dx3+dy3*dy3);
     double cross = dx1*dy2 - dy1*dx2;  // L-11: raw cross (not abs) for direction
     double curv = (d1*d2*d3 > 1e-9) ? (2.0*std::abs(cross)/(d1*d2*d3)) : 0.0;
 
@@ -115,10 +117,14 @@ void CornerDetector::processPoint(double dist, double lat, double lon, double sp
             // Estimate radius from curvature: R ≈ 1/κ_max
             seg.radius_m = (cd.max_curv > 0.001) ? (1.0/cd.max_curv) : 100.0;
             // Estimate angle from entry→exit Haversine distance and radius
-            // Uses Haversine for accurate arc-length estimation at all latitudes
             double entry_exit_dist = haversineMeters(
                 seg.entry_lat, seg.entry_lon, seg.exit_lat, seg.exit_lon);
-            seg.angle_deg = (seg.radius_m > 1) ? (entry_exit_dist/seg.radius_m*180.0/3.14159265358979) : 90.0;
+            // P1-1: accurate angle via 2*arcsin(chord/(2*R))
+            constexpr double kPI = 3.14159265358979323846;
+            double half_chord = entry_exit_dist * 0.5;
+            seg.angle_deg = (seg.radius_m > 1.0)
+                ? (2.0 * std::asin(std::min(1.0, half_chord / seg.radius_m)) * 180.0 / kPI)
+                : 90.0;
             if (seg.angle_deg > 180) seg.angle_deg = 180;
 
             // Reference data: NaN (auto-detected, no reference yet)
