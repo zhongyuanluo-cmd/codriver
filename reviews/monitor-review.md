@@ -3140,3 +3140,268 @@ double curv = (d1*d2*d3 > 1e-9) ? (4.0 * area / (d1*d2*d3)) : 0.0;
 | P1-6 | 🟡 | ✅ | 生命周期注释清晰 |
 
 **合入判定**: ✅ 全部通过
+
+---
+
+## R-020: 跨模块集成 + Backend/Flutter 剩余模块审查
+
+- **审查日期**: 2026-06-04
+- **审查人**: Monitor (GLM)
+- **审查范围**:
+  - Flutter: `sensor_channel.dart`
+  - Backend: `coach.py`, `tracks.py`, `sessions.py`, `config.py`, `supabase.py`, `coach_client.py`, `main.py`, `schemas.py`
+  - 跨模块: C++ → C API → Dart FFI → Flutter UI → Backend API 全链路一致性
+- **审查基准**: API 正确性、安全性、跨层数据模型一致性、生产就绪度
+
+---
+
+### sensor_channel.dart
+
+#### 🟡 P1-1: EventChannel 返回无类型 Map — 缺少字段校验
+
+```dart
+Stream<Map<String, dynamic>> get fusedPointStream {
+    return _channel.receiveBroadcastStream().map((event) {
+        return Map<String, dynamic>.from(event as Map);
+    });
+}
+```
+
+**问题**: EventChannel 返回的是平台侧序列化的 `Map`，Dart 侧直接 `Map<String, dynamic>.from()` 但无字段校验。如果 native 侧字段名拼写错误或缺失（如 `speed_kmh` 拼成 `speed`），运行时只会得到 null/missing key，不会报错。
+
+**影响**: 数据流静默丢失字段，下游 `analysis_screen.dart` 使用这些字段时可能得到 null，导致 UI 渲染异常或 NaN 传播到 C++ 引擎。
+
+**修复建议**: 添加字段提取 + 类型断言包装器，类似：
+```dart
+FusedPoint parseFusedPoint(Map<String, dynamic> m) {
+  return FusedPoint(
+    timestampMs: m['timestamp_ms'] as int? ?? 0,
+    latitude: (m['lat'] as num?)?.toDouble() ?? 0.0,
+    // ... with type-safe extraction
+  );
+}
+```
+
+#### 🟢 P2-1: EventChannel channel name 硬编码
+
+`'com.codriver/sensors'` 硬编码在类内部。如果多引擎实例并存（如对比两个 session），channel name 会冲突。当前阶段可接受，后续多实例场景需参数化。
+
+---
+
+### Backend API
+
+#### coach.py
+
+TODO 骨架，`coach_chat()` 和 `session_brief()` 返回硬编码 JSON。无安全问题。
+
+#### tracks.py
+
+TODO 骨架，`list_tracks()` 和 `get_track()` 返回硬编码 JSON。无安全问题。
+
+#### sessions.py
+
+TODO 骨架，`upload_session()` 和 `get_session()` 返回硬编码 JSON。无安全问题。
+
+#### config.py
+
+#### 🔴 P0-1: API 密钥以明文存储在 Settings 中
+
+```python
+class Settings(BaseSettings):
+    supabase_url: str = ""
+    supabase_anon_key: str = ""
+    qwen_api_key: str = ""
+    llama_api_key: str = ""
+```
+
+**问题**: `supabase_anon_key` 虽然名为 "anon key"，但实际上 Supabase anon key 是公开的 JWT token（RLS 保护的），可以接受。但 `qwen_api_key` 和 `llama_api_key` 是付费 LLM API 密钥，从 `.env` 加载后以明文存在于 `Settings` 对象中。
+
+**影响**:
+1. 任何能访问 `settings` 对象的代码都可以读取密钥
+2. 如果日志系统意外序列化 `settings` 对象，密钥会泄露到日志
+3. `Settings` 继承 `BaseSettings`，Pydantic 的 `model_dump()` / `dict()` 会包含密钥
+
+**修复建议**:
+1. 从 `Settings` 中移除 `qwen_api_key` / `llama_api_key`，改为通过 `os.environ` 或 secrets manager 按需读取
+2. 如果保留在 Settings 中，至少重写 `model_dump()` 过滤敏感字段：
+```python
+def model_dump(self, **kwargs):
+    d = super().model_dump(**kwargs)
+    d.pop('qwen_api_key', None)
+    d.pop('llama_api_key', None)
+    return d
+```
+
+**备注**: 这是 Phase 0 阶段可接受的实现，但标记为 P0 因为一旦部署到生产环境，密钥泄露风险极高。如果当前只在开发环境使用，可降级为 P1。
+
+#### supabase.py
+
+#### 🟡 P1-2: 全局单例 Supabase 客户端无线程安全保证
+
+```python
+_supabase: Client | None = None
+
+def get_supabase() -> Client:
+    global _supabase
+    if _supabase is None:
+        _supabase = create_client(settings.supabase_url, settings.supabase_anon_key)
+    return _supabase
+```
+
+**问题**: 
+1. **竞态条件**: FastAPI 的 async endpoint 在多个协程中并发调用 `get_supabase()`，`if _supabase is None` 不是原子操作，可能创建多个 client
+2. **Supabase Python 客户端线程安全未知**: `create_client()` 返回的 `Client` 对象是否线程安全取决于 supabase-py 实现
+
+**修复建议**: 使用 `functools.lru_cache` 或 `threading.Lock` 保护初始化：
+```python
+import threading
+_lock = threading.Lock()
+
+def get_supabase() -> Client:
+    global _supabase
+    if _supabase is None:
+        with _lock:
+            if _supabase is None:
+                _supabase = create_client(...)
+    return _supabase
+```
+
+#### 🟡 P1-3: Supabase 配置缺失时抛 RuntimeError 而非 FastAPI HTTPException
+
+```python
+if not settings.supabase_url:
+    raise RuntimeError("SUPABASE_URL not configured")
+```
+
+**问题**: `RuntimeError` 在 FastAPI 中会导致 500 Internal Server Error，但更合适的做法是返回 503 Service Unavailable，让客户端知道是服务端配置问题而非代码 bug。
+
+**修复建议**: 
+```python
+from fastapi import HTTPException
+if not settings.supabase_url:
+    raise HTTPException(status_code=503, detail="Database not configured")
+```
+
+#### main.py
+
+#### 🟡 P1-4: CORS allow_origins=["*"] — 开发环境可接受，生产必须限制
+
+```python
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # DEV ONLY: restrict in production
+    allow_credentials=True,
+)
+```
+
+**问题**: `allow_origins=["*"]` + `allow_credentials=True` 的组合在 CORS 规范中是被禁止的。浏览器会拒绝带 credentials 的 `*` origin 响应。实际上 FastAPI 会自动将这种组合降级为不带 `Access-Control-Allow-Credentials: true`，但语义上不一致。
+
+**修复建议**: 开发阶段保留 `*` 但去掉 `allow_credentials=True`（当前无 cookie-based auth）；生产阶段改为具体 origin 列表。
+
+#### coach_client.py
+
+TODO 骨架，`chat()` 返回硬编码字符串。无安全问题。
+
+---
+
+### 跨模块一致性
+
+#### 🔴 P0-2: Pipeline → CoachEngine 集成缺少 `pipelineFinalize()` 调用点
+
+**问题**: `AnalysisPipeline` 有 `finalize()` 方法用于在 session 结束时 flush 最后一个 pending corner 的结果。`c_api.h` 也暴露了 `c_pipeline_finalize()`。但在 Dart 层 `engine_ffi.dart` 和 Flutter UI 层，没有代码调用这个函数。
+
+**当前数据流**:
+```
+GPS → sensor_channel → pipelineProcessPoint → pipelineGetResult → coachEngineFeed
+```
+
+**缺失环节**: Session 结束时需要：
+```
+pipelineFinalize() → pipelineGetResult (获取 flush 的最后一条) → coachEngineFeed
+```
+
+**影响**: 最后一个弯道的分析结果会丢失（因为 `finalize()` 从未被调用）。在赛道场景中，终点线前通常有最后一个弯道，这个弯道的数据会完全丢失。
+
+**修复**: 在 Flutter 的 session 结束逻辑中添加 `pipelineFinalize()` 调用，并将 flush 出的结果喂给 CoachEngine。
+
+#### 🟡 P1-5: Backend schemas.py TrackSegment 与 C++ types.h 字段不完全对齐
+
+| 字段 | C++ TrackSegment | Python TrackSegment | 差异 |
+|:---|:---|:---|:---|
+| `apex_lat/apex_lon` | ✅ | ✅ | 一致 |
+| `reference_entry_speed_kmh` | ✅ | ✅ | 一致 |
+| `reference_exit_speed_kmh` | ✅ | ✅ | 一致 |
+| `reference_lateral_g` | ✅ | ✅ | 一致 |
+| `segment_id` | `const char*` (→ id_store) | `str` | ⚠️ 生命周期不同，C++ 需注意悬垂指针 |
+
+Python schema 与 C++ struct 字段名和类型基本对齐。主要差异是 `segment_id` 的生命周期（C++ 侧指向 `id_store` 内部字符串，Python 侧是自有 `str`），这在 R-019 中已标注。
+
+#### 🟡 P1-6: Backend schemas.py CornerMetrics 与 C++ CornerMetrics 字段不对齐
+
+| C++ CornerMetrics 字段 | Python CornerMetrics 字段 | 差异 |
+|:---|:---|:---|
+| `entry_speed_kmh` | `entry_speed_kmh` | ✅ |
+| `min_speed_kmh` | `min_speed_kmh` | ✅ |
+| `exit_speed_kmh` | `exit_speed_kmh` | ✅ |
+| `peak_lat_g` | `peak_lat_g` | ✅ |
+| `line_deviation_avg_m` | ❌ 缺失 | Python 无此字段 |
+| `apex_proximity_m` | ❌ 缺失 | Python 无此字段 |
+| `braking_score` | `braking_score` | ✅ |
+| `speed_score` | `speed_score` | ✅ |
+| `throttle_score` | `throttle_score` | ✅ |
+| `line_score` | `line_score` | ✅ |
+| ❌ 缺失 | `corner_id` | Python 额外 ID 字段 |
+| ❌ 缺失 | `lap_id` | Python 额外关联字段 |
+| ❌ 缺失 | `segment_id` | Python 额外关联字段 |
+
+**问题**: Python 的 `CornerMetrics` 缺少 C++ 的 `line_deviation_avg_m` 和 `apex_proximity_m`，但多了 `corner_id`、`lap_id`、`segment_id` 关联字段。当 C++ 引擎通过 FFI 产生 `CornerMetrics` 数据传到 Backend 时，缺少的字段会丢失。
+
+**修复**: Python `CornerMetrics` 添加 `line_deviation_avg_m: float` 和 `apex_proximity_m: float`，或者重新设计 Python schema 使其与 C++ struct 的 FFI 输出对齐。
+
+#### 🟡 P1-7: CCoachMessage 的 `coachEngineFeed` 签名不一致 — const 修饰
+
+**C API**:
+```c
+void c_coach_engine_feed(void* handle, const CPipelineResult* result);
+```
+
+**Dart FFI**:
+```dart
+static void coachEngineFeed(Pointer<Void> h, Pointer<CPipelineResult> result)
+```
+
+Dart 侧 `Pointer<CPipelineResult>` 对应 C 的 `const CPipelineResult*`，FFI 不区分 const 修饰，功能正确。但语义上 Dart 侧不应修改传入的 struct（C 承诺不修改）。这不影响功能，仅是代码意图的表达问题。
+
+#### 🟢 P2-2: Backend analysis.py mock 数据中 coach_tier 固定为 2
+
+```python
+def _mock_corner_analysis(seg_id: str, base_speed: float) -> CornerAnalysis:
+    return CornerAnalysis(
+        # ...
+        feedback_tier=2,  # 固定值
+    )
+```
+
+Mock 数据中 `feedback_tier` 全部为 2，不如根据 `root_cause` 类型分 tier（如 `entry_too_hot` → tier 1, `throttle_late` → tier 2）。纯建议，不影响功能。
+
+---
+
+### 审查汇总
+
+| ID | 级别 | 问题 | 影响 |
+|:---:|:---:|------|------|
+| P0-1 | 🔴 | Backend config.py API 密钥明文存储，model_dump() 会泄露 | 密钥泄露风险 |
+| P0-2 | 🔴 | Pipeline finalize() 缺少调用点，最后一个弯道数据丢失 | 数据丢失 |
+| P1-1 | 🟡 | sensor_channel.dart 无字段校验 | 静默数据丢失 |
+| P1-2 | 🟡 | Supabase 客户端初始化非线程安全 | 竞态条件 |
+| P1-3 | 🟡 | Supabase 配置缺失抛 RuntimeError 非 HTTPException | 错误状态码不准确 |
+| P1-4 | 🟡 | CORS * + credentials=True 语义不一致 | 浏览器可能拒绝 |
+| P1-5 | 🟡 | TrackSegment Python/C++ 生命周期差异 | 潜在悬垂指针 |
+| P1-6 | 🟡 | CornerMetrics Python/C++ 字段不对齐 | 数据丢失 |
+| P1-7 | 🟡 | coachEngineFeed Dart const 语义缺失 | 代码意图不清 |
+| P2-1 | 🟢 | EventChannel name 硬编码 | 多实例冲突 |
+| P2-2 | 🟢 | Mock 数据 tier 固定为 2 | 测试覆盖不足 |
+
+**合入判定**: ❌ P0-1（密钥泄露风险）和 P0-2（数据丢失）阻塞
+
+**备注**: P0-1 如果只在开发环境使用可降级为 P1。P0-2 是功能性缺陷，必须修复。
