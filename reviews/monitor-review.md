@@ -2789,3 +2789,205 @@ Dart 布局应匹配（Dart FFI 遵循 C ABI 规则），但未经验证。
 - **新增行**: +35 (CCoachMessage struct + 9 FFI 绑定 + 注释修正)
 - **C/Dart 签名一致性**: 10/10 项完全匹配
 - **内存布局合规**: CCoachMessage 264B, CSessionStats 56B 均符合 C ABI
+
+---
+
+## R-019: 剩余 C++ 核心模块审查
+
+- **审查日期**: 2026-06-04
+- **审查人**: Monitor (GLM)
+- **审查范围**: `kalman_filter.h/.cpp`, `corner_detector.h/.cpp`, `root_cause.h/.cpp`, `coach_template.h/.cpp`, `lap_timer.h/.cpp`, `c_api.h/.cpp`, `types.h`
+- **审查基准**: 功能正确性、内存安全、数值精度、C API 一致性
+
+---
+
+### kalman_filter.h / .cpp
+
+**状态**: TODO 骨架 — 所有方法体为空 (`/* TODO */`)
+
+15-state EKF 声明正确 (pos 3 + vel 3 + attitude 4 + accel_bias 3 + gyro_bias 3 = 16，但声明 15-state 可能是 attitude 用 3 参数欧拉角而非 4 元数)。P 阵初始化 `P *= 100.0` 是合理的初始协方差。
+
+**无 bug** — 纯未实现。非本次审查范围。
+
+---
+
+### corner_detector.cpp
+
+#### 🔴 P0-1: Menger Curvature 用 lat/lon 原始差值代替实际距离
+
+```cpp
+double dx1 = w.lat[1]-w.lat[0], dy1 = w.lon[1]-w.lon[0];
+// ...
+double d1 = std::sqrt(dx1*dx1+dy1*dy1), d2 = ..., d3 = ...;
+double curv = ... 2.0*std::abs(cross)/(d1*d2*d3) ...;
+```
+
+这里 `dx1`, `dy1` 是经纬度差值（度数），不是实际距离（米）。在高纬度地区（如纬度 60°），1° 经度 ≈ 55 km 而 1° 纬度 ≈ 111 km，两者比例 ≈ 1:2。这会导致：
+- **曲率计算失真**：同一弯道在不同纬度下算出不同的曲率
+- **弯道检测阈值失效**：`kCurvEntryThresh = 0.02` 是基于"度"单位的经验值，不具空间意义
+
+**影响**: 实际赛道通常在中纬度（25-55°），经度缩放因子 0.5-0.8。曲率计算偏差约 20-50%。极端情况下可能导致漏检或误检。
+
+**修复**: 用 Haversine 距离或至少 `cos(lat)` 校正的平面距离替代 lat/lon 原始差值。注意：文件中已有 `haversineMeters()` 函数（用于 entry→exit 距离计算），可复用。
+
+#### 🟡 P1-1: 弯道角度计算方法不精确
+
+```cpp
+seg.angle_deg = (seg.radius_m > 1) ? (entry_exit_dist/seg.radius_m*180.0/PI) : 90.0;
+```
+
+这里用的是 **弦长 / 半径** 来估算圆心角，但实际上弦长对应的圆心角公式是 `2 * arcsin(chord / (2*R))`，不是 `chord / R`。当角度 < 60° 时误差较小（<5%），但大角度弯道（如发卡弯 150°+）误差可达 15%+。
+
+**建议**: 改为 `2.0 * std::asin(std::min(1.0, entry_exit_dist / (2.0 * seg.radius_m))) * 180.0 / PI`
+
+#### 🟡 P1-2: CornerData 持续增长直到弯道结束
+
+`cd.lats`, `cd.lons`, `cd.distances`, `cd.speeds`, `cd.curvatures` 在弯道检测期间不断追加。对于非常长的弯道（如连续弯/复合弯），这些 vector 可能增长到数千个元素。然而弯道结束时一次性清空 (`cd.reset()`)，无内存泄漏。
+
+**建议**: 对长弯道考虑设置上限或滑动窗口。
+
+#### 🟢 P2-1: 弯道难度启发式简单但实用
+
+`tight` + `ang` 各 1-4 分取平均，简单合理。可后续考虑加入 speed_drop 等因素。
+
+---
+
+### root_cause.cpp
+
+#### 🔴 P0-2: RootCauseResult.segment_id 未赋值 → 悬垂/未初始化指针
+
+```cpp
+RootCauseResult res;   // segment_id = 未初始化 const char*
+res.root_cause = r[0].cause;
+res.root_cause_label = r[0].label;
+res.confidence = r[0].conf;
+res.suggestion = r[0].suggestion;
+res.time_loss_ms = r[0].loss;
+return res;
+// segment_id 从未赋值！
+```
+
+`RootCauseResult::segment_id` 是 `const char*`，未初始化 → 读取时 UB。在 `c_api.cpp` 的 `c_root_cause_analyze` 中：
+```cpp
+std::snprintf(out->cause, ..., r.root_cause ? r.root_cause : "");
+// 注意：没有拷贝 segment_id 到 CRootCause
+```
+
+C API 层的 `CRootCause` struct 没有 `segment_id` 字段（只有 cause/label/conf/sugg/loss），所以 FFI 层不会读到未初始化值。但 C++ 层使用 `RootCauseResult` 时如果访问 `segment_id` 则是 UB。
+
+**修复**: 要么在 `analyze()` 中接受 `segment_id` 参数并赋值，要么从 `RootCauseResult` 中移除该字段（C API 已不暴露它）。
+
+#### 🟡 P1-3: 规则排序按 confidence 首字母判断脆弱
+
+```cpp
+int pa = (a.conf[0]=='h'?3:(a.conf[0]=='m'?2:1));
+```
+
+如果 `conf` 字符串为空，`conf[0]` 读取 `\0`，`pa=1`（low），逻辑上可接受但脆弱。建议用 `strcmp` 或枚举。
+
+#### 🟡 P1-4: 规则可叠加但只返回根因
+
+7 条规则可以同时触发（如 entry_too_hot + lack_trail_brake），但只返回排序最高的一个。`time_loss_ms` 估算基于单一指标（`abs(delta) * weight`），精度有限。
+
+**建议**: 后续可考虑返回多因分析（与 CoachEngine 的 tier 体系配合）。
+
+---
+
+### coach_template.cpp
+
+**无 P0/P1 问题**。
+
+- `impl_->buffer` (std::string) 持有文本，`msg.text = impl_->buffer.c_str()` → C++ 层 `CoachMessage.text` 是 `std::string`，赋值时拷贝，无悬垂。✅
+- 8 条模板规则与 `root_cause.cpp` 的 8 条 cause 严格 1:1 对应。✅
+- `else` 分支有 fallback `"analysis pending"`。✅
+
+---
+
+### lap_timer.cpp
+
+**无 P0/P1 问题**。
+
+- Orientation test 实现正确（标准线段交叉检测算法）。✅
+- 正向穿越过滤（`cross_dir > 0`）防止反向穿越误触发。✅
+- `*impl_ = Impl{};` 重置安全，所有 POD 成员归零。✅
+- 距离计算用 `cos(lat)` 校正经度缩放，精度可接受。✅
+
+#### 🟢 P2-2: 首点距离初始化为 0 后立即赋值
+
+```cpp
+impl_->lap_dist = 0; impl_->total_dist = 0;
+```
+在 `has_prev == false` 分支中设置，首次 `processPoint` 返回 0 距离。正确——首点没有位移。✅
+
+---
+
+### c_api.cpp
+
+**无 P0 问题**。
+
+- 所有 `void*` handle 的 null 检查覆盖完整。✅
+- 所有 `const char*` → `char[]` 使用 `snprintf` / `strncpy` 截断安全。✅
+- `c_coach_engine_feed` 中 `CPipelineResult` → `PipelineResult` 的 `memcpy` 字段映射完整。✅
+
+#### 🟡 P1-5: feed_batch 用循环逐条调用 feed — 效率低
+
+```cpp
+void c_coach_engine_feed_batch(void* h, const CPipelineResult* results, int count) {
+    for(int i=0;i<count;i++) c_coach_engine_feed(h, &results[i]);
+}
+```
+
+每条都做完整的 CPipelineResult → PipelineResult memcpy + feed。批量数据（如 100+ 条结果）时效率低。
+
+**建议**: 在 C++ 层添加 `CoachEngine::feedBatch(const PipelineResult*, int)` 方法，减少函数调用开销。当前实现功能正确，性能影响仅在大量数据时可见。
+
+#### 🟢 P2-3: c_api 中 CornerDetector 的 getSegments() 返回 vector 拷贝
+
+```cpp
+auto segs=o->getSegments(); // 返回 std::vector<TrackSegment> 拷贝
+```
+
+每次调用都拷贝整个 segments vector。对于频繁查询（如 UI 实时更新），可考虑 `const` 引用或迭代器模式。当前影响有限。
+
+---
+
+### types.h
+
+#### 🟡 P1-6: TrackSegment / RootCauseResult 使用 const char* 依赖外部持有者
+
+```cpp
+struct TrackSegment {
+    const char* segment_id;       // 依赖 CornerDetector::Impl::id_store
+    const char* segment_type;     // 依赖字符串字面量 "corner"
+    const char* turn_direction;   // 依赖字符串字面量 "left"/"right"
+```
+
+```cpp
+struct RootCauseResult {
+    const char* segment_id;       // 未赋值 (P0-2)
+    const char* root_cause;       // 依赖硬编码字符串字面量
+```
+
+如果 `getSegments()` 返回的 vector 中 TrackSegment 的 `segment_id` 指向 `id_store` 元素的 `c_str()`，而 `id_store` 被 `clear()` 后，这些指针全部悬垂。当前代码中 `reset()` 同时清理了 `id_store` 和 `segments`，所以只要不同时持有 `getSegments()` 返回值和调用 `reset()`，是安全的。但这是一个隐含的约束。
+
+**建议**: 文档化 `getSegments()` 返回值的生命周期约束：在下次 `processPoint()` 或 `reset()` 调用前有效。
+
+---
+
+### 审查汇总
+
+| ID | 级别 | 问题 | 状态 |
+|:---:|:---:|------|:---:|
+| P0-1 | 🔴 P0 | corner_detector Menger Curvature 用 lat/lon 原始差值代替实际距离 | ❌ 待修 |
+| P0-2 | 🔴 P0 | RootCauseResult.segment_id 未赋值 → 未初始化指针 UB | ❌ 待修 |
+| P1-1 | 🟡 P1 | 弯道角度计算用 chord/R 而非 2*arcsin(chord/2R) | ❌ 待修 |
+| P1-2 | 🟡 P1 | CornerData 长弯道无上限 | ❌ 可选 |
+| P1-3 | 🟡 P1 | confidence 排序按首字母判断脆弱 | ❌ 可选 |
+| P1-4 | 🟡 P1 | root_cause 只返回单一根因 | ❌ 可选 |
+| P1-5 | 🟡 P1 | feed_batch 循环逐条调用效率低 | ❌ 可选 |
+| P1-6 | 🟡 P1 | TrackSegment/RootCauseResult 的 const char* 生命周期约束未文档化 | ❌ 待修 |
+| P2-1 | 🟢 P2 | 弯道难度启发式可扩展 | 💡 建议 |
+| P2-2 | 🟢 P2 | lap_timer 首点距离初始化 | ✅ 正确 |
+| P2-3 | 🟢 P2 | getSegments() 返回 vector 拷贝 | 💡 建议 |
+
+**合入判定**: ❌ P0-1 + P0-2 阻塞 — 前者影响弯道检测精度（所有纬度），后者导致 UB
