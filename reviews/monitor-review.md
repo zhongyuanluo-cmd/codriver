@@ -2991,3 +2991,152 @@ struct RootCauseResult {
 | P2-3 | 🟢 P2 | getSegments() 返回 vector 拷贝 | 💡 建议 |
 
 **合入判定**: ❌ P0-1 + P0-2 阻塞 — 前者影响弯道检测精度（所有纬度），后者导致 UB
+
+---
+
+### R-019 验证 (fix/R-019 @ f01c005)
+
+- **验证日期**: 2026-06-04
+- **验证人**: Monitor (GLM)
+- **修复分支**: `fix/R-019` @ `f01c005`
+
+#### P0-1: Menger Curvature 用 Haversine 距离 — ❌ 量纲不一致
+
+Worker 将 `d1,d2,d3` 从 lat/lon 欧氏距离改为 `haversineMeters()` 返回的米数距离，但 `cross` 叉积仍用 lat/lon 度数差值计算：
+
+```cpp
+double d1 = haversineMeters(...);  // 米 (m)
+double d2 = haversineMeters(...);  // 米 (m)
+double d3 = haversineMeters(...);  // 米 (m)
+double cross = dx1*dy2 - dy1*dx2;  // 度² (°²)
+double curv = 2.0*std::abs(cross)/(d1*d2*d3);  // °²/m³ ≠ 1/m
+```
+
+**量纲分析**: Menger Curvature $κ = \frac{4A}{d_1 d_2 d_3}$ 要求面积 A 和边长 d 同单位。当前 cross（°²）与 d1*d2*d3（m³）量纲不匹配。
+
+**数值验证**（纬度 30°，GPS 间距 ~5m）:
+- cross ≈ 2.5e-9 °²（lat/lon 差 ~0.00005°）
+- d1*d2*d3 ≈ 250 m³
+- curv ≈ 2e-11 — 远低于阈值 0.02，弯道检测**永远无法触发**
+
+**原始代码对比**: 原始代码中 d1,d2,d3 也是度数，所以量纲一致（°²/°³ = 1/°），阈值 0.02 在度数空间有意义。改为米后反而引入量纲错误。
+
+**正确修复方案**: 将 lat/lon 转为局部米制坐标后再统一计算。例如：
+```cpp
+// 以第一个点为原点，转成局部米制坐标
+constexpr double kMPerDeg = 111320.0;
+double cos_lat = std::cos(w.lat[0] * kPI / 180.0);
+double x0 = 0, y0 = 0;
+double x1 = (w.lon[1]-w.lon[0]) * kMPerDeg * cos_lat;
+double y1 = (w.lat[1]-w.lat[0]) * kMPerDeg;
+double x2 = (w.lon[2]-w.lon[0]) * kMPerDeg * cos_lat;
+double y2 = (w.lat[2]-w.lat[0]) * kMPerDeg;
+// 然后用 x,y 计算 cross 和 d1,d2,d3，全部在米制空间
+double cross_m = (x1-x0)*(y2-y0) - (y1-y0)*(x2-x0);  // m²
+double d1 = std::sqrt((x1-x0)*(x1-x0)+(y1-y0)*(y1-y0));  // m
+// ...
+double curv = 2.0*std::abs(cross_m)/(d1*d2*d3);  // 1/m ← 正确曲率量纲
+```
+
+此时阈值 `kCurvEntryThresh = 0.02` 对应 1/m 单位，即 R = 50m 的弯道。可根据实际赛道调整。
+
+**结论**: P0-1 修复方向正确（用米代替度数），但执行不完整。需要统一 cross 和 d 的量纲。**回退要求**。
+
+#### P0-2: RootCauseResult.segment_id 初始化 — ✅ 已修复
+
+```cpp
+res.segment_id = "";  // P0-2: initialize to avoid UB
+```
+
+空字符串字面量 `""` 是静态存储期，安全。C API 不暴露此字段，不影响 FFI。
+
+#### P1-1: 弯道角度计算 — ✅ 已修复
+
+```cpp
+double half_chord = entry_exit_dist * 0.5;
+seg.angle_deg = 2.0 * std::asin(std::min(1.0, half_chord / seg.radius_m)) * 180.0 / kPI;
+```
+
+- `entry_exit_dist` 是 Haversine 弦长（直线距离）✅
+- `half_chord = entry_exit_dist / 2` ✅
+- `min(1.0, ...)` 防止浮点越界 ✅
+- 公式 `2*arcsin(chord/(2R))` 是正确的圆心角公式 ✅
+- 角度上限 180° 截断合理 ✅
+
+**注意**: 由于 P0-1 的量纲问题，`radius_m` 的值也会受影响（`1.0/curv`），所以角度计算虽然公式正确，但输入 `radius_m` 可能不准确。修复 P0-1 后此问题自动解决。
+
+#### P1-6: const char* 生命周期注释 — ✅ 已修复
+
+- `TrackSegment` 添加了 segment_id → id_store + processPoint/reset 生命周期约束注释
+- `RootCauseResult` 添加了 segment_id → "" + 字面量永久生命周期注释
+- 注释清晰、准确
+
+---
+
+### R-019 验证汇总
+
+| ID | 级别 | 结果 | 说明 |
+|:---:|:---:|:---:|------|
+| P0-1 | 🔴 | ❌ | 量纲不一致：cross(°²) / d³(m³) ≠ 曲率(1/m)，弯道检测无法触发 |
+| P0-2 | 🔴 | ✅ | segment_id = "" 初始化安全 |
+| P1-1 | 🟡 | ✅ | 公式正确，但依赖 P0-1 修复后的 radius_m |
+| P1-6 | 🟡 | ✅ | 生命周期注释清晰 |
+
+**合入判定**: ❌ P0-1 量纲错误阻塞 — 需回退重修
+
+---
+
+### R-019 验证 Round 2 (fix/R-019 @ 125b681)
+
+- **验证日期**: 2026-06-04
+- **验证人**: Monitor (GLM)
+- **修复分支**: `fix/R-019` @ `125b681`
+
+#### P0-1: Menger Curvature 量纲一致性 — ✅ 已修复 (Round 2)
+
+Worker 改用 **Heron 公式**计算三角形面积，替代原来的 degree cross product：
+
+```cpp
+// Triangle area via Heron's formula (all meters, consistent with d1/d2/d3)
+double sp = (d1 + d2 + d3) * 0.5;
+double area = (sp > 0) ? std::sqrt(std::max(0.0, sp * (sp-d1) * (sp-d2) * (sp-d3))) : 0.0;
+double curv = (d1*d2*d3 > 1e-9) ? (4.0 * area / (d1*d2*d3)) : 0.0;
+```
+
+**量纲验证**:
+- `d1,d2,d3` = Haversine 米数 (m) ✅
+- `sp` = 半周长 (m), `area` = Heron 面积 (m²) ✅
+- `curv = 4A / (d₁d₂d₃)` → m²/m³ = 1/m ✅ 曲率量纲正确
+
+**数值验证** (纬度 30°, R=50m 弯道, GPS 间距 ~5m):
+- d1≈d2≈5m, d3≈10m
+- Menger 公式: κ = 4A/(d₁d₂d₃) ≈ 0.02 1/m → R = 1/κ = 50m
+- 阈值 `kCurvEntryThresh = 0.02` 对应 R≤50m 弯道检测，物理意义明确 ✅
+
+**方向判断**: `cross` (lat/lon 度数叉积) 现在仅用于 `cross_sum` 的符号判断（左/右），不参与曲率数值。经度缩放不影响叉积符号 ✅
+
+**边界安全**: `std::max(0.0, ...)` 防止浮点误差致负值 ✅
+
+**Round 1 回顾**: 原方案用 degree cross (°²) 除以 meter d³ (m³)，量纲不匹配。Heron 方案完全避免了坐标转换问题，是更优雅的解法。
+
+#### 回归检查
+
+| 修复项 | Round 1 | Round 2 | 状态 |
+|:---:|:---:|:---:|:---:|
+| P0-1 curv 量纲 | ❌ °²/m³ | ✅ m²/m³ = 1/m | Round 2 修复 |
+| P0-2 segment_id init | ✅ | ✅ (无 diff) | 保留 |
+| P1-1 angle arcsin | ✅ | ✅ (无 diff) | 保留 |
+| P1-6 lifecycle 注释 | ✅ | ✅ (无 diff) | 保留 |
+
+---
+
+### R-019 验证汇总 (Round 2)
+
+| ID | 级别 | 结果 | 说明 |
+|:---:|:---:|:---:|------|
+| P0-1 | 🔴 | ✅ | Heron 面积 (m²) / d³ (m³) = 1/m，量纲正确 |
+| P0-2 | 🔴 | ✅ | segment_id = "" 初始化安全 |
+| P1-1 | 🟡 | ✅ | 公式正确，radius_m 现在由正确曲率导出 |
+| P1-6 | 🟡 | ✅ | 生命周期注释清晰 |
+
+**合入判定**: ✅ 全部通过

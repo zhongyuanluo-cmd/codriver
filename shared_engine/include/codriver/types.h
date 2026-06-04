@@ -25,6 +25,9 @@ struct FusedPoint {
 };
 
 // --- 赛道分段 ---
+// P1-6: segment_id 指向 CornerDetector::Impl::id_store 中的 std::string
+// 生命周期约束：在下次 processPoint() 或 reset() 调用前有效
+// segment_type/turn_direction 指向字符串字面量，生命周期永久
 struct TrackSegment {
     const char* segment_id;       // "T3"
     const char* segment_type;     // "corner" | "straight" | "complex"
@@ -69,6 +72,8 @@ struct CornerMetrics {
 };
 
 // --- 根因推断结果 ---
+// P1-6: segment_id 当前初始化 ""（C API 不暴露该字段）
+// root_cause/label/confidence/suggestion 指向硬编码字符串字面量，生命周期永久
 struct RootCauseResult {
     const char* segment_id;
     const char* root_cause;         // "entry_too_early"

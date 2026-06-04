@@ -60,6 +60,7 @@ RootCauseResult RootCauseEngine::analyze(
 
     if (impl_->count > 0) {
         RootCauseResult res;
+        res.segment_id = "";  // P0-2: initialize to avoid UB (C API doesn't expose this field)
         res.root_cause = r[0].cause;
         res.root_cause_label = r[0].label;
         res.confidence = r[0].conf;
