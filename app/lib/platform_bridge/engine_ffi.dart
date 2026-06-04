@@ -124,8 +124,14 @@ final class CSessionStats extends Struct {
   @Double() external double consistency;
 }
 
+final class CCoachMessage extends Struct {
+  @Array(256) external Array<Uint8> text;
+  @Int32() external int tier;
+  @Int32() external int priority;
+}
+
 // ============================================================
-// EngineFFI — complete C API bindings (55/55)
+// EngineFFI — complete C API bindings (67/67)
 // ============================================================
 
 class EngineFFI {
@@ -332,8 +338,7 @@ class EngineFFI {
 
   // ============================================================
   // ============================================================
-  // Session Stats (7/7 complete)
-  // ============================================================ — Phase 2.8 (5/5)
+  // Session Stats (7/7) — Phase 2.8
   // ============================================================
   static Pointer<Void> sessionStatsCreate() =>
       lib.lookupFunction<Pointer<Void> Function(), Pointer<Void> Function()>('c_session_stats_create')();
@@ -352,4 +357,31 @@ class EngineFFI {
       lib.lookupFunction<Int32 Function(Pointer<Void>), int Function(Pointer<Void>)>('c_session_stats_count')(h);
   static void sessionStatsReset(Pointer<Void> h) =>
       lib.lookupFunction<Void Function(Pointer<Void>), void Function(Pointer<Void>)>('c_session_stats_reset')(h);
+
+  // ============================================================
+  // Coach Engine (9/9) — Phase 3.1
+  // ============================================================
+  static Pointer<Void> coachEngineCreate() =>
+      lib.lookupFunction<Pointer<Void> Function(), Pointer<Void> Function()>('c_coach_engine_create')();
+  static void coachEngineDestroy(Pointer<Void> h) =>
+      lib.lookupFunction<Void Function(Pointer<Void>), void Function(Pointer<Void>)>('c_coach_engine_destroy')(h);
+  static void coachEngineFeed(Pointer<Void> h, Pointer<CPipelineResult> result) =>
+      lib.lookupFunction<Void Function(Pointer<Void>, Pointer<CPipelineResult>),
+          void Function(Pointer<Void>, Pointer<CPipelineResult>)>('c_coach_engine_feed')(h, result);
+  static void coachEngineFeedBatch(Pointer<Void> h, Pointer<CPipelineResult> results, int count) =>
+      lib.lookupFunction<Void Function(Pointer<Void>, Pointer<CPipelineResult>, Int32),
+          void Function(Pointer<Void>, Pointer<CPipelineResult>, int)>('c_coach_engine_feed_batch')(h, results, count);
+  static int coachEngineMessageCount(Pointer<Void> h) =>
+      lib.lookupFunction<Int32 Function(Pointer<Void>), int Function(Pointer<Void>)>('c_coach_engine_message_count')(h);
+  static int coachEngineTierCount(Pointer<Void> h, int tier) =>
+      lib.lookupFunction<Int32 Function(Pointer<Void>, Int32),
+          int Function(Pointer<Void>, int)>('c_coach_engine_tier_count')(h, tier);
+  static int coachEngineGetMessage(Pointer<Void> h, int tier, int index, Pointer<CCoachMessage> out) =>
+      lib.lookupFunction<Int32 Function(Pointer<Void>, Int32, Int32, Pointer<CCoachMessage>),
+          int Function(Pointer<Void>, int, int, Pointer<CCoachMessage>)>('c_coach_engine_get_message')(h, tier, index, out);
+  static int coachEngineGenerateSummary(Pointer<Void> h, int lapNumber, int lapTimeMs, Pointer<CCoachMessage> out) =>
+      lib.lookupFunction<Int32 Function(Pointer<Void>, Int32, Int64, Pointer<CCoachMessage>),
+          int Function(Pointer<Void>, int, int, Pointer<CCoachMessage>)>('c_coach_engine_generate_summary')(h, lapNumber, lapTimeMs, out);
+  static void coachEngineClear(Pointer<Void> h) =>
+      lib.lookupFunction<Void Function(Pointer<Void>), void Function(Pointer<Void>)>('c_coach_engine_clear')(h);
 }
