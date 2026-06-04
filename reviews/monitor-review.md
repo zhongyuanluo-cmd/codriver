@@ -2991,3 +2991,95 @@ struct RootCauseResult {
 | P2-3 | 🟢 P2 | getSegments() 返回 vector 拷贝 | 💡 建议 |
 
 **合入判定**: ❌ P0-1 + P0-2 阻塞 — 前者影响弯道检测精度（所有纬度），后者导致 UB
+
+---
+
+### R-019 验证 (fix/R-019 @ f01c005)
+
+- **验证日期**: 2026-06-04
+- **验证人**: Monitor (GLM)
+- **修复分支**: `fix/R-019` @ `f01c005`
+
+#### P0-1: Menger Curvature 用 Haversine 距离 — ❌ 量纲不一致
+
+Worker 将 `d1,d2,d3` 从 lat/lon 欧氏距离改为 `haversineMeters()` 返回的米数距离，但 `cross` 叉积仍用 lat/lon 度数差值计算：
+
+```cpp
+double d1 = haversineMeters(...);  // 米 (m)
+double d2 = haversineMeters(...);  // 米 (m)
+double d3 = haversineMeters(...);  // 米 (m)
+double cross = dx1*dy2 - dy1*dx2;  // 度² (°²)
+double curv = 2.0*std::abs(cross)/(d1*d2*d3);  // °²/m³ ≠ 1/m
+```
+
+**量纲分析**: Menger Curvature $κ = \frac{4A}{d_1 d_2 d_3}$ 要求面积 A 和边长 d 同单位。当前 cross（°²）与 d1*d2*d3（m³）量纲不匹配。
+
+**数值验证**（纬度 30°，GPS 间距 ~5m）:
+- cross ≈ 2.5e-9 °²（lat/lon 差 ~0.00005°）
+- d1*d2*d3 ≈ 250 m³
+- curv ≈ 2e-11 — 远低于阈值 0.02，弯道检测**永远无法触发**
+
+**原始代码对比**: 原始代码中 d1,d2,d3 也是度数，所以量纲一致（°²/°³ = 1/°），阈值 0.02 在度数空间有意义。改为米后反而引入量纲错误。
+
+**正确修复方案**: 将 lat/lon 转为局部米制坐标后再统一计算。例如：
+```cpp
+// 以第一个点为原点，转成局部米制坐标
+constexpr double kMPerDeg = 111320.0;
+double cos_lat = std::cos(w.lat[0] * kPI / 180.0);
+double x0 = 0, y0 = 0;
+double x1 = (w.lon[1]-w.lon[0]) * kMPerDeg * cos_lat;
+double y1 = (w.lat[1]-w.lat[0]) * kMPerDeg;
+double x2 = (w.lon[2]-w.lon[0]) * kMPerDeg * cos_lat;
+double y2 = (w.lat[2]-w.lat[0]) * kMPerDeg;
+// 然后用 x,y 计算 cross 和 d1,d2,d3，全部在米制空间
+double cross_m = (x1-x0)*(y2-y0) - (y1-y0)*(x2-x0);  // m²
+double d1 = std::sqrt((x1-x0)*(x1-x0)+(y1-y0)*(y1-y0));  // m
+// ...
+double curv = 2.0*std::abs(cross_m)/(d1*d2*d3);  // 1/m ← 正确曲率量纲
+```
+
+此时阈值 `kCurvEntryThresh = 0.02` 对应 1/m 单位，即 R = 50m 的弯道。可根据实际赛道调整。
+
+**结论**: P0-1 修复方向正确（用米代替度数），但执行不完整。需要统一 cross 和 d 的量纲。**回退要求**。
+
+#### P0-2: RootCauseResult.segment_id 初始化 — ✅ 已修复
+
+```cpp
+res.segment_id = "";  // P0-2: initialize to avoid UB
+```
+
+空字符串字面量 `""` 是静态存储期，安全。C API 不暴露此字段，不影响 FFI。
+
+#### P1-1: 弯道角度计算 — ✅ 已修复
+
+```cpp
+double half_chord = entry_exit_dist * 0.5;
+seg.angle_deg = 2.0 * std::asin(std::min(1.0, half_chord / seg.radius_m)) * 180.0 / kPI;
+```
+
+- `entry_exit_dist` 是 Haversine 弦长（直线距离）✅
+- `half_chord = entry_exit_dist / 2` ✅
+- `min(1.0, ...)` 防止浮点越界 ✅
+- 公式 `2*arcsin(chord/(2R))` 是正确的圆心角公式 ✅
+- 角度上限 180° 截断合理 ✅
+
+**注意**: 由于 P0-1 的量纲问题，`radius_m` 的值也会受影响（`1.0/curv`），所以角度计算虽然公式正确，但输入 `radius_m` 可能不准确。修复 P0-1 后此问题自动解决。
+
+#### P1-6: const char* 生命周期注释 — ✅ 已修复
+
+- `TrackSegment` 添加了 segment_id → id_store + processPoint/reset 生命周期约束注释
+- `RootCauseResult` 添加了 segment_id → "" + 字面量永久生命周期注释
+- 注释清晰、准确
+
+---
+
+### R-019 验证汇总
+
+| ID | 级别 | 结果 | 说明 |
+|:---:|:---:|:---:|------|
+| P0-1 | 🔴 | ❌ | 量纲不一致：cross(°²) / d³(m³) ≠ 曲率(1/m)，弯道检测无法触发 |
+| P0-2 | 🔴 | ✅ | segment_id = "" 初始化安全 |
+| P1-1 | 🟡 | ✅ | 公式正确，但依赖 P0-1 修复后的 radius_m |
+| P1-6 | 🟡 | ✅ | 生命周期注释清晰 |
+
+**合入判定**: ❌ P0-1 量纲错误阻塞 — 需回退重修
