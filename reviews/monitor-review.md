@@ -2602,3 +2602,129 @@ const char* key = r.root_cause_label[0] != '\0' ? r.root_cause_label : r.root_ca
 - **内存安全**: CCoachMessage.text 改为 char[256]，与项目 C API 惯例一致，悬垂指针风险消除
 - **const 正确性**: generateLapSummary() 使用 cache+dirty flag，不再违规修改状态
 - **性能**: feed() 延迟排序，get_message() 直接索引
+
+---
+
+## R-018: Phase 3.1 Dart FFI 同步 + 跨模块一致性审查
+
+- **审查日期**: 2026-06-04
+- **审查人**: Monitor (GLM)
+- **审查范围**: `engine_ffi.dart` 与 `c_api.h` 的同步性、跨模块类型一致性
+- **基准提交**: `master` @ `3740436`（合并 fix/R-017 后）
+
+### 审查背景
+
+R-017 验证确认 CoachEngine C++ 侧修复完成并已合入 master。但 Phase 3.1 新增的 `CCoachMessage` struct 和 8 个 `c_coach_engine_*` 函数在 Dart FFI 层 (`engine_ffi.dart`) 完全未同步。本次审查聚焦 FFI 绑定缺口和跨模块一致性。
+
+---
+
+### P0-1: engine_ffi.dart 缺少 CoachEngine 全部绑定 — 🔴 必须修复
+
+**问题**: `c_api.h` Phase 3.1 新增了以下 API，但 `engine_ffi.dart` 完全缺失：
+
+| C API 函数 | engine_ffi.dart |
+|:---|:---:|
+| `c_coach_engine_create()` | ❌ 缺失 |
+| `c_coach_engine_destroy()` | ❌ 缺失 |
+| `c_coach_engine_feed()` | ❌ 缺失 |
+| `c_coach_engine_feed_batch()` | ❌ 缺失 |
+| `c_coach_engine_message_count()` | ❌ 缺失 |
+| `c_coach_engine_tier_count()` | ❌ 缺失 |
+| `c_coach_engine_get_message()` | ❌ 缺失 |
+| `c_coach_engine_generate_summary()` | ❌ 缺失 |
+| `c_coach_engine_clear()` | ❌ 缺失 |
+
+同时缺失 `CCoachMessage` struct 定义：
+```c
+typedef struct { char text[256]; int tier; int priority; } CCoachMessage;
+```
+
+**影响**: Flutter 端无法使用 CoachEngine 任何功能。Phase 3.1 的 Dart 侧集成完全断裂。
+
+**修复要求**:
+1. 添加 `CCoachMessage` struct（含 `@Array(256) text`, `@Int32() tier`, `@Int32() priority`）
+2. 添加 9 个 `c_coach_engine_*` FFI 绑定函数
+3. 更新计数器 `55/55` → `63/63`（原 55 + CoachEngine 8 = 63；注意 `c_coach_engine_feed_batch` 接收数组，Dart 签名需要 `Pointer<CPipelineResult>` + `int count`）
+
+---
+
+### P1-1: engine_ffi.dart 函数计数器过时 — 🟡 建议修复
+
+**问题**: 文件头部注释 `55/55 fields` 但实际 C API 已有 63 个函数（Phase 2.5 +7, Phase 2.8 +7, Phase 3.1 +8 = 22 新增）。
+
+当前 `engine_ffi.dart` 实际绑定了：
+- KalmanFilter: 7
+- CornerDetector: 5
+- RootCause: 3
+- CoachTemplate: 3
+- LapTimer: 6
+- CoordTransform: 6
+- BrakeDetector: 5
+- CornerSpeedCompare: 3
+- AnalysisPipeline: 6
+- BestLapFinder: 7
+- SessionStats: 7
+- **合计: 58**（不是 55）
+
+注意：`55/55` 的计数在之前的 Phase 中已不准确。实际已有 58 个绑定 + CoachEngine 9 个 = 67 个。
+
+**修复**: 更新注释为 `67/67`，并在各 section 注释中标注完整函数数。
+
+---
+
+### P1-2: CCoachMessage struct 对齐验证 — 🟡 建议验证
+
+**问题**: `CCoachMessage` 中 `char text[256]` 后跟两个 `int`，在 MSVC/x64 下 `int` 自然对齐到 4 字节边界，256 是 4 的倍数，所以无需填充。但需要确认 Dart FFI 的 `@Array(256)` + `@Int32()` + `@Int32()` 布局与 C 一致。
+
+**预期布局**:
+```
+offset 0-255: text[256]
+offset 256-259: tier (int)
+offset 260-263: priority (int)
+sizeof = 264
+```
+
+**修复**: 添加 `CCoachMessage` 后，建议在 Dart 侧写一个简单的 `sizeOf<CCoachMessage>()` 断言测试，确认等于 264。
+
+---
+
+### P1-3: CSessionStats 嵌入式 CBestLapResult 的 FFI 兼容性 — 🟡 建议验证
+
+**问题**: `CSessionStats` 嵌入了 `CBestLapResult best` 作为第一个字段。Dart FFI `Struct` 嵌入通过 `external CBestLapResult best;` 实现。
+
+C 布局：
+```
+CBestLapResult best: 4+4+8+8+8+4 = 36 bytes + 4 padding = 40 bytes (int64_t 对齐)
+double avg_speed: 8 bytes
+double consistency: 8 bytes
+sizeof = 56 bytes
+```
+
+Dart 布局应匹配（Dart FFI 遵循 C ABI 规则），但未经验证。
+
+**修复**: 建议 `sizeOf<CSessionStats>()` 断言测试，确认等于 56。
+
+---
+
+### P2-1: Coach Template section 注释与 Coach Engine section 区分 — 🟢 建议
+
+**问题**: 当前 `engine_ffi.dart` 中 `Coach Template (3/3 complete)` section 的函数名是 `coachCreate/coachDestroy/coachTemplateGenerate`，新增的 CoachEngine section 函数名是 `coachEngineCreate/coachEngineDestroy/...`。命名空间无冲突，但 section 注释应明确区分：
+
+- `Coach Template (3/3)` → 模板文本生成（Phase 0 遗留）
+- `Coach Engine (9/9)` → 教练引擎（Phase 3.1）
+
+**修复**: 添加清晰的 section 分隔注释。
+
+---
+
+### 审查汇总
+
+| ID | 级别 | 问题 | 状态 |
+|:---:|:---:|------|:---:|
+| P0-1 | 🔴 P0 | engine_ffi.dart 缺少 CoachEngine 全部 9 个绑定 + CCoachMessage struct | ❌ 待修 |
+| P1-1 | 🟡 P1 | 函数计数器 55/55 过时，应为 67/67 | ❌ 待修 |
+| P1-2 | 🟡 P1 | CCoachMessage FFI 布局未验证 | ❌ 待验证 |
+| P1-3 | 🟡 P1 | CSessionStats 嵌入式 struct FFI 布局未验证 | ❌ 待验证 |
+| P2-1 | 🟢 P2 | Coach Template/Engine section 注释区分 | ❌ 待修 |
+
+**合入判定**: ❌ P0-1 阻塞 — Flutter 端无法调用 CoachEngine
