@@ -61,11 +61,14 @@ void CornerDetector::processPoint(double dist, double lat, double lon, double sp
     double d1 = haversineMeters(w.lat[0], w.lon[0], w.lat[1], w.lon[1]);
     double d2 = haversineMeters(w.lat[1], w.lon[1], w.lat[2], w.lon[2]);
     double d3 = haversineMeters(w.lat[0], w.lon[0], w.lat[2], w.lon[2]);
-    // Cross product still uses lat/lon diff in degrees for sign only (direction)
+    // Triangle area via Heron's formula (all meters, consistent with d1/d2/d3)
+    double sp = (d1 + d2 + d3) * 0.5;
+    double area = (sp > 0) ? std::sqrt(std::max(0.0, sp * (sp-d1) * (sp-d2) * (sp-d3))) : 0.0;
+    double curv = (d1*d2*d3 > 1e-9) ? (4.0 * area / (d1*d2*d3)) : 0.0;
+    // Cross product sign uses degree diffs for turn direction only (sign correct at all latitudes)
     double dx1 = w.lat[1]-w.lat[0], dy1 = w.lon[1]-w.lon[0];
     double dx2 = w.lat[2]-w.lat[1], dy2 = w.lon[2]-w.lon[1];
-    double cross = dx1*dy2 - dy1*dx2;  // L-11: raw cross (not abs) for direction
-    double curv = (d1*d2*d3 > 1e-9) ? (2.0*std::abs(cross)/(d1*d2*d3)) : 0.0;
+    double cross = dx1*dy2 - dy1*dx2;  // L-11: sign for left/right direction
 
     auto& s = impl_->state;
     auto& cd = impl_->current;
