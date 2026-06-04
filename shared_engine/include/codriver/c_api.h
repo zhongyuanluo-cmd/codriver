@@ -148,7 +148,7 @@ int c_session_stats_count(void* handle);
 void c_session_stats_reset(void* handle);
 
 // --- Coach Engine (Phase 3.1) ---
-typedef struct { const char* text; int tier; int priority; } CCoachMessage;
+typedef struct { char text[256]; int tier; int priority; } CCoachMessage;
 void* c_coach_engine_create();
 void c_coach_engine_destroy(void* handle);
 void c_coach_engine_feed(void* handle, const CPipelineResult* result);

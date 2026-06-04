@@ -600,7 +600,7 @@ int main() {
         int rc = c_coach_engine_generate_summary(ce, 1, 120000, &summary);
         assert(rc == 0);
         assert(summary.tier == 3);
-        assert(summary.text != nullptr);
+        assert(summary.text[0] != '\0');
 
         c_coach_engine_destroy(ce);
         printf("PASS: CoachEngine lap summary: tier=%d\n", summary.tier);

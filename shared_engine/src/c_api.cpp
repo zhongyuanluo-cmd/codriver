@@ -86,7 +86,7 @@ void c_coach_template_destroy(void* h) { if(!h)return; auto o=reinterpret_cast<c
 int c_coach_template_generate(void* h, const char* seg, const char* cause, double delta, int tier, char* buf, int len) {
     if(!h||!buf||len<=0)return 0; auto o=reinterpret_cast<codriver::CoachTemplate*>(h);
     auto msg=o->generate(seg,cause,delta,tier);
-    int n=std::snprintf(buf,len,"%s",msg.text?msg.text:""); return (n<len)?n:len-1;
+    int n=std::snprintf(buf,len,"%s",msg.text.c_str()); return (n<len)?n:len-1;
 }
 
 // ============================================================
@@ -344,23 +344,27 @@ int c_coach_engine_tier_count(void* h, int tier) {
 }
 int c_coach_engine_get_message(void* h, int tier, int index, CCoachMessage* out) {
     if(!h||!out||index<0)return -1; auto o=reinterpret_cast<codriver::CoachEngine*>(h);
-    std::vector<codriver::CoachMessage> msgs;
+    // P1-4: direct index into const ref, no vector copy
+    const std::vector<codriver::CoachMessage>* msgs = nullptr;
     switch(tier) {
-        case 1: msgs = o->tier1Messages(); break;
-        case 2: msgs = o->tier2Messages(); break;
-        case 3: msgs = o->tier3Messages(); break;
+        case 1: msgs = &o->tier1Messages(); break;
+        case 2: msgs = &o->tier2Messages(); break;
+        case 3: msgs = &o->tier3Messages(); break;
         default: return -1;
     }
-    if(index >= (int)msgs.size()) return -1;
-    out->text = msgs[index].text;
-    out->tier = msgs[index].tier;
-    out->priority = msgs[index].priority;
+    if(index >= (int)msgs->size()) return -1;
+    const auto& msg = (*msgs)[index];
+    std::strncpy(out->text, msg.text.c_str(), 255);
+    out->text[255] = '\0';
+    out->tier = msg.tier;
+    out->priority = msg.priority;
     return 0;
 }
 int c_coach_engine_generate_summary(void* h, int lap_number, int64_t lap_time_ms, CCoachMessage* out) {
     if(!h||!out)return -1; auto o=reinterpret_cast<codriver::CoachEngine*>(h);
     auto msg = o->generateLapSummary(lap_number, lap_time_ms);
-    out->text = msg.text;
+    std::strncpy(out->text, msg.text.c_str(), 255);
+    out->text[255] = '\0';
     out->tier = msg.tier;
     out->priority = msg.priority;
     return 0;
