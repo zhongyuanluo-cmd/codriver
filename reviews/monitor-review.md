@@ -3083,3 +3083,60 @@ seg.angle_deg = 2.0 * std::asin(std::min(1.0, half_chord / seg.radius_m)) * 180.
 | P1-6 | 🟡 | ✅ | 生命周期注释清晰 |
 
 **合入判定**: ❌ P0-1 量纲错误阻塞 — 需回退重修
+
+---
+
+### R-019 验证 Round 2 (fix/R-019 @ 125b681)
+
+- **验证日期**: 2026-06-04
+- **验证人**: Monitor (GLM)
+- **修复分支**: `fix/R-019` @ `125b681`
+
+#### P0-1: Menger Curvature 量纲一致性 — ✅ 已修复 (Round 2)
+
+Worker 改用 **Heron 公式**计算三角形面积，替代原来的 degree cross product：
+
+```cpp
+// Triangle area via Heron's formula (all meters, consistent with d1/d2/d3)
+double sp = (d1 + d2 + d3) * 0.5;
+double area = (sp > 0) ? std::sqrt(std::max(0.0, sp * (sp-d1) * (sp-d2) * (sp-d3))) : 0.0;
+double curv = (d1*d2*d3 > 1e-9) ? (4.0 * area / (d1*d2*d3)) : 0.0;
+```
+
+**量纲验证**:
+- `d1,d2,d3` = Haversine 米数 (m) ✅
+- `sp` = 半周长 (m), `area` = Heron 面积 (m²) ✅
+- `curv = 4A / (d₁d₂d₃)` → m²/m³ = 1/m ✅ 曲率量纲正确
+
+**数值验证** (纬度 30°, R=50m 弯道, GPS 间距 ~5m):
+- d1≈d2≈5m, d3≈10m
+- Menger 公式: κ = 4A/(d₁d₂d₃) ≈ 0.02 1/m → R = 1/κ = 50m
+- 阈值 `kCurvEntryThresh = 0.02` 对应 R≤50m 弯道检测，物理意义明确 ✅
+
+**方向判断**: `cross` (lat/lon 度数叉积) 现在仅用于 `cross_sum` 的符号判断（左/右），不参与曲率数值。经度缩放不影响叉积符号 ✅
+
+**边界安全**: `std::max(0.0, ...)` 防止浮点误差致负值 ✅
+
+**Round 1 回顾**: 原方案用 degree cross (°²) 除以 meter d³ (m³)，量纲不匹配。Heron 方案完全避免了坐标转换问题，是更优雅的解法。
+
+#### 回归检查
+
+| 修复项 | Round 1 | Round 2 | 状态 |
+|:---:|:---:|:---:|:---:|
+| P0-1 curv 量纲 | ❌ °²/m³ | ✅ m²/m³ = 1/m | Round 2 修复 |
+| P0-2 segment_id init | ✅ | ✅ (无 diff) | 保留 |
+| P1-1 angle arcsin | ✅ | ✅ (无 diff) | 保留 |
+| P1-6 lifecycle 注释 | ✅ | ✅ (无 diff) | 保留 |
+
+---
+
+### R-019 验证汇总 (Round 2)
+
+| ID | 级别 | 结果 | 说明 |
+|:---:|:---:|:---:|------|
+| P0-1 | 🔴 | ✅ | Heron 面积 (m²) / d³ (m³) = 1/m，量纲正确 |
+| P0-2 | 🔴 | ✅ | segment_id = "" 初始化安全 |
+| P1-1 | 🟡 | ✅ | 公式正确，radius_m 现在由正确曲率导出 |
+| P1-6 | 🟡 | ✅ | 生命周期注释清晰 |
+
+**合入判定**: ✅ 全部通过
