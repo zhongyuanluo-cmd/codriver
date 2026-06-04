@@ -2512,3 +2512,93 @@ std::string CoachEngine::generateLapSummary() const {
 2. **P0-2 的 const 修饰不是"小问题"** — 它意味着调用者认为 `generateLapSummary()` 无副作用，可以随意调用，但实际上每次调用都在增长 `buffers`
 3. **修复 P0-1 后 P2-3 自动解决** — 不需要单独处理
 4. **P1-4 与 P0-1 修复一起做** — 既然改了 `get_message()` 的实现，顺手优化掉 vector 拷贝
+
+---
+
+### R-017 验证 (fix/R-017 @ 4c0b6bf)
+
+- **验证日期**: 2026-06-04
+- **验证人**: Monitor (GLM)
+- **修复分支**: `fix/R-017` @ `4c0b6bf`
+- **基准分支**: `feat/phase-3.1-coach-engine` @ `4c128c1`
+
+#### P0-1: CCoachMessage.text 悬垂指针 — ✅ 已修复
+
+| 文件 | 修改内容 | 验证 |
+|:---:|------|:---:|
+| `c_api.h` | `CCoachMessage` 中 `const char* text` → `char text[256]` | ✅ 与 CCornerInfo/CBrakeEvent/CPipelineResult 一致 |
+| `types.h` | `CoachMessage` 中 `const char* text` → `std::string text` | ✅ C++ 侧安全，避免手动内存管理 |
+| `c_api.cpp` | `get_message()` / `generate_summary()` 中 `strncpy(out->text, msg.text.c_str(), 255); out->text[255]='\0';` | ✅ 正确拷贝到 char[]，无悬垂 |
+| `coach_engine.cpp` | `classify()` 中 `msg.text = r.coach_message;`（std::string 赋值，自含所有权） | ✅ 不再需要 `impl_->buffers` |
+| `analysis_pipeline.cpp` | 2 处 `msg.text ? msg.text : ""` → `msg.text.c_str()` | ✅ 适配 std::string |
+| `c_api.cpp` | `coach_template_generate` 中同上 (1 处) | ✅ 适配 std::string |
+
+**内存安全验证**: CCoachMessage.text 是 char[256]，strncpy 拷贝，与项目所有其他 C struct 一致。悬垂指针风险彻底消除。
+
+#### P0-2: generateLapSummary() const 违规 + 无限增长 — ✅ 已修复
+
+| 修改内容 | 验证 |
+|------|:---:|
+| 新增 `mutable CoachMessage summary_cache_; mutable bool summary_dirty_ = true;` | ✅ cache + dirty flag 方案 |
+| `generateLapSummary()`: 先检查 `!summary_dirty_ && !summary_cache_.text.empty()` → 命中缓存直接返回 | ✅ 重复调用不再增长 |
+| 缓存未命中时调用 `buildSummary()` 写入 `summary_cache_` | ✅ 不再向 `buffers` 添加 |
+| `feed()`/`feedBatch()`/`clear()` 中设置 `summary_dirty_ = true` | ✅ 数据变更使缓存失效 |
+| 移除了 `impl_->buffers` 字段 | ✅ 不再有无限增长的 vector |
+
+**const 语义验证**: `generateLapSummary()` 仍为 `const`，通过 `mutable` 修饰实现合法缓存。重复调用行为正确（返回缓存结果），`feed()` 后缓存失效。
+
+#### P1-1: feed() 每次全排序 → 延迟排序 — ✅ 已修复
+
+| 修改内容 | 验证 |
+|------|:---:|
+| 新增 `mutable bool dirty_ = false;` | ✅ |
+| `feed()`/`feedBatch()` 设置 `dirty_ = true` | ✅ |
+| 新增 `ensureSorted()`: 若 `dirty_` 则排序，否则跳过 | ✅ |
+| `tier1Messages()`/`tier2Messages()`/`tier3Messages()` 调用 `ensureSorted()` | ✅ |
+| tier vectors 改为 `mutable`（const 方法中需排序） | ✅ |
+
+**性能改善**: n 次 feed 仅在首次访问时排序 1 次，O(n log n) 总排序。
+
+#### P1-2: tier/priority 语义重叠缺文档 — ✅ 已修复
+
+`coach_engine.h` 类注释已添加明确说明：
+- "tier 为主排序键（决定播报时机），priority 为同 tier 内次排序键（0=最高优）"
+- Tier 1/2/3 各自的播报时机说明
+- `CoachMessage` 结构体字段注释
+
+#### P1-3: feedBatch() 缺 reserve() — ✅ 已修复
+
+`feedBatch()` 添加 `impl_->results.reserve(impl_->results.size() + results.size())`。`feed()` 也添加了 reserve。
+
+#### P1-4: get_message() 整体 vector 拷贝 — ✅ 已修复
+
+改为 `const std::vector<CoachMessage>* msgs = &o->tier1Messages();` 取指针，再 `(*msgs)[index]` 直接索引，消除 vector 拷贝。
+
+#### P2-1: 圈总结用 root_cause 非 label — ✅ 已修复
+
+`buildSummary()` 中：
+```cpp
+const char* key = r.root_cause_label[0] != '\0' ? r.root_cause_label : r.root_cause;
+```
+优先使用 `root_cause_label`，为空时 fallback 到 `root_cause`。
+
+#### P2-2: Pipeline↔CoachEngine 自动集成 — 📋推迟（符合预期）
+#### P2-3: clear() 失效指针 — ✅ P0-1 修复后自动解决
+
+---
+
+### 验证汇总
+
+| 审查 | P0 必须 | P1 建议 | P2 推迟 |
+|:----:|:---:|:---:|:---:|
+| R-017 | ✅ 2/2 | ✅ 4/4 | ✅ 2/3 (P2-1修复, P2-2推迟, P2-3自动解决) |
+
+**合入判定**: ✅ 修改后通过
+
+### 修复验证
+
+- **测试结果**: `test_engine.exe` 32/32 tests pass
+- **构建结果**: MSVC 0 errors
+- **内存安全**: CCoachMessage.text 改为 char[256]，与项目 C API 惯例一致，悬垂指针风险消除
+- **const 正确性**: generateLapSummary() 使用 cache+dirty flag，不再违规修改状态
+- **性能**: feed() 延迟排序，get_message() 直接索引
