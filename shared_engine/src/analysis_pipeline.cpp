@@ -183,7 +183,7 @@ bool AnalysisPipeline::processPoint(const FusedPoint& point) {
                     std::max(std::abs(r.min_delta_kmh), std::abs(r.exit_delta_kmh))),
                 2);
             std::snprintf(r.coach_message, sizeof(r.coach_message), "%s",
-                msg.text ? msg.text : "");
+                msg.text.c_str());
             r.coach_priority = msg.priority;
             r.coach_tier = msg.tier;
 
@@ -275,7 +275,7 @@ bool AnalysisPipeline::finalize() {
                 std::max(std::abs(r.min_delta_kmh), std::abs(r.exit_delta_kmh))),
             2);
         std::snprintf(r.coach_message, sizeof(r.coach_message), "%s",
-            msg.text ? msg.text : "");
+            msg.text.c_str());
         r.coach_priority = msg.priority;
         r.coach_tier = msg.tier;
 

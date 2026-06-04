@@ -6,6 +6,7 @@
 #include "codriver/analysis_pipeline.h"
 #include "codriver/best_lap_finder.h"
 #include "codriver/session_stats.h"
+#include "codriver/coach_engine.h"
 #include "codriver/c_api.h"
 #include "codriver/lap_timer.h"
 #include <cassert>
@@ -523,6 +524,113 @@ int main() {
         assert(drift == 1);
         c_coord_transform_destroy(ct);
         printf("PASS: c_api CoordTransform: calibrate=%d long_g=%.3f drift=%d\n", ok, clg, drift);
+    }
+
+    // ============================================================
+    // Phase 3.1: Coach Engine
+    // ============================================================
+
+    // Test 21: CoachEngine create/destroy/clear
+    {
+        void* ce = c_coach_engine_create();
+        assert(ce != nullptr);
+        assert(c_coach_engine_message_count(ce) == 0);
+        c_coach_engine_destroy(ce);
+        printf("PASS: CoachEngine create/destroy\n");
+    }
+
+    // Test 22: CoachEngine feed + tier classification
+    {
+        void* ce = c_coach_engine_create();
+        CPipelineResult r1{};
+        std::memcpy(r1.seg_id, "T1", 3);
+        std::memcpy(r1.msg, "T1: brake too early", 20);
+        r1.tier = 1; r1.priority = 0;
+
+        CPipelineResult r2{};
+        std::memcpy(r2.seg_id, "T3", 3);
+        std::memcpy(r2.msg, "T3: throttle late", 19);
+        r2.tier = 2; r2.priority = 1;
+
+        CPipelineResult r3{};
+        std::memcpy(r3.seg_id, "T5", 3);
+        std::memcpy(r3.msg, "T5: exit wide", 14);
+        r3.tier = 1; r3.priority = 1;
+
+        c_coach_engine_feed(ce, &r1);
+        c_coach_engine_feed(ce, &r2);
+        c_coach_engine_feed(ce, &r3);
+
+        assert(c_coach_engine_message_count(ce) == 3);
+        assert(c_coach_engine_tier_count(ce, 1) == 2);  // T1 + T5
+        int t2cnt = c_coach_engine_tier_count(ce, 2);
+        assert(t2cnt == 1);  // T3
+        assert(c_coach_engine_tier_count(ce, 3) == 0);
+
+        // Get tier 1 messages
+        CCoachMessage cm{};
+        int rc = c_coach_engine_get_message(ce, 1, 0, &cm);
+        assert(rc == 0);
+        assert(cm.tier == 1);
+
+        c_coach_engine_destroy(ce);
+        printf("PASS: CoachEngine feed+tier: t1=2 t2=%d t3=0\n", t2cnt);
+    }
+
+    // Test 23: CoachEngine lap summary
+    {
+        void* ce = c_coach_engine_create();
+
+        CPipelineResult r1{};
+        std::memcpy(r1.seg_id, "T1", 3);
+        std::memcpy(r1.cause, "entry_too_hot", 14);
+        std::memcpy(r1.msg, "T1: entry too hot", 18);
+        r1.loss_ms = 500; r1.tier = 1;
+
+        CPipelineResult r2{};
+        std::memcpy(r2.seg_id, "T3", 3);
+        std::memcpy(r2.cause, "throttle_late", 14);
+        std::memcpy(r2.msg, "T3: throttle late", 18);
+        r2.loss_ms = 300; r2.tier = 2;
+
+        c_coach_engine_feed(ce, &r1);
+        c_coach_engine_feed(ce, &r2);
+
+        CCoachMessage summary{};
+        int rc = c_coach_engine_generate_summary(ce, 1, 120000, &summary);
+        assert(rc == 0);
+        assert(summary.tier == 3);
+        assert(summary.text[0] != '\0');
+
+        c_coach_engine_destroy(ce);
+        printf("PASS: CoachEngine lap summary: tier=%d\n", summary.tier);
+    }
+
+    // Test 24: CoachEngine clear + reuse
+    {
+        void* ce = c_coach_engine_create();
+
+        CPipelineResult r1{};
+        std::memcpy(r1.seg_id, "T1", 3);
+        std::memcpy(r1.msg, "T1: test", 9);
+        r1.tier = 1;
+        c_coach_engine_feed(ce, &r1);
+        assert(c_coach_engine_message_count(ce) == 1);
+
+        c_coach_engine_clear(ce);
+        assert(c_coach_engine_message_count(ce) == 0);
+
+        // Reuse after clear
+        CPipelineResult r2{};
+        std::memcpy(r2.seg_id, "T2", 3);
+        std::memcpy(r2.msg, "T2: test", 9);
+        r2.tier = 2;
+        c_coach_engine_feed(ce, &r2);
+        assert(c_coach_engine_message_count(ce) == 1);
+        assert(c_coach_engine_tier_count(ce, 2) == 1);
+
+        c_coach_engine_destroy(ce);
+        printf("PASS: CoachEngine clear+reuse\n");
     }
 
     printf("\nAll tests passed.\n");

@@ -10,6 +10,7 @@
 #include "codriver/analysis_pipeline.h"
 #include "codriver/best_lap_finder.h"
 #include "codriver/session_stats.h"
+#include "codriver/coach_engine.h"
 #include "codriver/types.h"
 #include <cstring>
 
@@ -85,7 +86,7 @@ void c_coach_template_destroy(void* h) { if(!h)return; auto o=reinterpret_cast<c
 int c_coach_template_generate(void* h, const char* seg, const char* cause, double delta, int tier, char* buf, int len) {
     if(!h||!buf||len<=0)return 0; auto o=reinterpret_cast<codriver::CoachTemplate*>(h);
     auto msg=o->generate(seg,cause,delta,tier);
-    int n=std::snprintf(buf,len,"%s",msg.text?msg.text:""); return (n<len)?n:len-1;
+    int n=std::snprintf(buf,len,"%s",msg.text.c_str()); return (n<len)?n:len-1;
 }
 
 // ============================================================
@@ -296,6 +297,80 @@ int c_session_stats_count(void* h) {
 }
 void c_session_stats_reset(void* h) {
     if(!h)return; auto o=reinterpret_cast<codriver::SessionStatsCalc*>(h); o->reset();
+}
+
+// ============================================================
+// Coach Engine (Phase 3.1)
+// ============================================================
+void* c_coach_engine_create() { return new codriver::CoachEngine(); }
+void c_coach_engine_destroy(void* h) {
+    if(!h)return; auto o=reinterpret_cast<codriver::CoachEngine*>(h); delete o;
+}
+void c_coach_engine_feed(void* h, const CPipelineResult* result) {
+    if(!h||!result)return; auto o=reinterpret_cast<codriver::CoachEngine*>(h);
+    codriver::PipelineResult pr{};
+    std::memcpy(pr.segment_id, result->seg_id, 32);
+    std::memcpy(pr.root_cause, result->cause, 32);
+    std::memcpy(pr.root_cause_label, result->label, 32);
+    std::memcpy(pr.confidence, result->conf, 16);
+    std::memcpy(pr.coach_message, result->msg, 256);
+    pr.entry_speed_kmh = result->entry_spd;
+    pr.min_speed_kmh = result->min_spd;
+    pr.exit_speed_kmh = result->exit_spd;
+    pr.max_lat_g = result->lat_g;
+    pr.entry_delta_kmh = result->e_delta;
+    pr.min_delta_kmh = result->m_delta;
+    pr.exit_delta_kmh = result->x_delta;
+    pr.lat_g_delta = result->l_delta;
+    pr.time_loss_ms = result->loss_ms;
+    pr.brake_distance_m = result->brake_dist;
+    pr.brake_peak_decel_g = result->brake_peak;
+    pr.brake_speed_drop_kmh = result->brake_drop;
+    pr.coach_priority = result->priority;
+    pr.coach_tier = result->tier;
+    o->feed(pr);
+}
+void c_coach_engine_feed_batch(void* h, const CPipelineResult* results, int count) {
+    if(!h||!results||count<=0)return;
+    for(int i=0;i<count;i++) c_coach_engine_feed(h, &results[i]);
+}
+int c_coach_engine_message_count(void* h) {
+    if(!h)return 0; auto o=reinterpret_cast<codriver::CoachEngine*>(h);
+    return o->messageCount();
+}
+int c_coach_engine_tier_count(void* h, int tier) {
+    if(!h)return 0; auto o=reinterpret_cast<codriver::CoachEngine*>(h);
+    return o->tierMessageCount(tier);
+}
+int c_coach_engine_get_message(void* h, int tier, int index, CCoachMessage* out) {
+    if(!h||!out||index<0)return -1; auto o=reinterpret_cast<codriver::CoachEngine*>(h);
+    // P1-4: direct index into const ref, no vector copy
+    const std::vector<codriver::CoachMessage>* msgs = nullptr;
+    switch(tier) {
+        case 1: msgs = &o->tier1Messages(); break;
+        case 2: msgs = &o->tier2Messages(); break;
+        case 3: msgs = &o->tier3Messages(); break;
+        default: return -1;
+    }
+    if(index >= (int)msgs->size()) return -1;
+    const auto& msg = (*msgs)[index];
+    std::strncpy(out->text, msg.text.c_str(), 255);
+    out->text[255] = '\0';
+    out->tier = msg.tier;
+    out->priority = msg.priority;
+    return 0;
+}
+int c_coach_engine_generate_summary(void* h, int lap_number, int64_t lap_time_ms, CCoachMessage* out) {
+    if(!h||!out)return -1; auto o=reinterpret_cast<codriver::CoachEngine*>(h);
+    auto msg = o->generateLapSummary(lap_number, lap_time_ms);
+    std::strncpy(out->text, msg.text.c_str(), 255);
+    out->text[255] = '\0';
+    out->tier = msg.tier;
+    out->priority = msg.priority;
+    return 0;
+}
+void c_coach_engine_clear(void* h) {
+    if(!h)return; auto o=reinterpret_cast<codriver::CoachEngine*>(h); o->clear();
 }
 
 } // extern "C"

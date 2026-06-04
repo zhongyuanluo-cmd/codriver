@@ -79,10 +79,12 @@ struct RootCauseResult {
 };
 
 // --- 模板播报消息 ---
+// tier: 主排序键，决定播报时机 (1=弯中即时<200ms, 2=直道期间, 3=圈后)
+// priority: 同 tier 内次排序键 (0=最高优, 越大越可推迟)
 struct CoachMessage {
-    const char* text;
-    int tier;              // 1, 2, or 3
-    int priority;          // 0=立即, 1=直道期间, 2=圈后
+    std::string text;
+    int tier;
+    int priority;
 };
 
 } // namespace codriver

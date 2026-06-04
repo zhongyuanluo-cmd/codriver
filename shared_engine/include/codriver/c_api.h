@@ -147,6 +147,18 @@ int c_session_stats_compute(void* handle, CSessionStats* out);
 int c_session_stats_count(void* handle);
 void c_session_stats_reset(void* handle);
 
+// --- Coach Engine (Phase 3.1) ---
+typedef struct { char text[256]; int tier; int priority; } CCoachMessage;
+void* c_coach_engine_create();
+void c_coach_engine_destroy(void* handle);
+void c_coach_engine_feed(void* handle, const CPipelineResult* result);
+void c_coach_engine_feed_batch(void* handle, const CPipelineResult* results, int count);
+int c_coach_engine_message_count(void* handle);
+int c_coach_engine_tier_count(void* handle, int tier);
+int c_coach_engine_get_message(void* handle, int tier, int index, CCoachMessage* out);
+int c_coach_engine_generate_summary(void* handle, int lap_number, int64_t lap_time_ms, CCoachMessage* out);
+void c_coach_engine_clear(void* handle);
+
 #ifdef __cplusplus
 }
 #endif
